@@ -28,7 +28,7 @@ param spnAuthority string = environment().authentication.loginEndpoint
 param spnTenantId string
 
 @description('Choice to deploy Bastion to connect to the client VM')
-param deployBastion bool = false
+param deployBastion bool = true
 
 @description('Name of the VNet')
 param virtualNetworkName string = 'SCVMM-VNet'
@@ -45,8 +45,14 @@ param bastionNetworkSecurityGroupName string = 'SCVMM-Bastion-NSG'
 @description('Target GitHub account')
 param githubAccount string = 'lanicolas'
 
+@description('Name of the Domain Controller subnet in the virtual network')
+param dcSubnetName string = 'ArcBoxSCVMM-DC-Subnet'
+
 @description('Target GitHub branch')
 param githubBranch string = 'scvmm'
+
+@description('Active directory domain services domain name')
+param addsDomainName string = 'jumpstart.local'
 
 var templateBaseUrl = 'https://raw.githubusercontent.com/${githubAccount}/azure_arc/${githubBranch}/azure_arc_servers_jumpstart/scvmm_full/'
 var bastionName = 'SCVMM-Bastion'
@@ -56,6 +62,7 @@ var osDiskType = 'Premium_LRS'
 var PublicIPNoBastion = {
   id: publicIpAddress.id
 }
+var dcSubnetPrefix = '10.16.2.0/24'
 var subnetAddressPrefix = '10.16.1.0/24'
 var addressPrefix = '10.16.0.0/16'
 var bastionSubnetName = 'AzureBastionSubnet'
@@ -219,7 +226,17 @@ resource arcVirtualNetwork 'Microsoft.Network/virtualNetworks@2022-01-01' = {
           }
         }
       }
-
+      {
+        name: dcSubnetName
+        properties: {
+          addressPrefix: dcSubnetPrefix
+          privateEndpointNetworkPolicies: 'Enabled'
+          privateLinkServiceNetworkPolicies: 'Enabled'
+          networkSecurityGroup: {
+            id: networkSecurityGroup.id
+          }
+        }
+      }
     ]
   }
 }
@@ -338,6 +355,39 @@ resource vmBootstrap 'Microsoft.Compute/virtualMachines/extensions@2022-03-01' =
       ]
       commandToExecute: 'powershell.exe -ExecutionPolicy Bypass -File Bootstrap.ps1 -adminUsername ${windowsAdminUsername} -adminPassword ${windowsAdminPassword} -spnClientId ${spnClientId} -spnClientSecret ${spnClientSecret} -spnTenantId ${spnTenantId} -spnAuthority ${spnAuthority} -subscriptionId ${subscription().subscriptionId} -resourceGroup ${resourceGroup().name} -azureLocation ${location} -templateBaseUrl ${templateBaseUrl} -githubUser ${githubAccount} -rdpPort ${rdpPort}'
     }
+  }
+}
+
+resource bastionpublicIpAddress 'Microsoft.Network/publicIPAddresses@2022-01-01' = if (deployBastion == true) {
+  name: bastionPublicIpAddressName
+  location: location
+  properties: {
+    publicIPAllocationMethod: 'Static'
+    publicIPAddressVersion: 'IPv4'
+    idleTimeoutInMinutes: 4
+  }
+  sku: {
+    name: 'Standard'
+  }
+}
+
+resource bastionHost 'Microsoft.Network/bastionHosts@2022-01-01' = if (deployBastion == true) {
+  name: bastionName
+  location: location
+  properties: {
+    ipConfigurations: [
+      {
+        name: 'IpConf'
+        properties: {
+          publicIPAddress: {
+            id: bastionpublicIpAddress.id
+          }
+          subnet: {
+            id: bastionSubnetRef
+          }
+        }
+      }
+    ]
   }
 }
 

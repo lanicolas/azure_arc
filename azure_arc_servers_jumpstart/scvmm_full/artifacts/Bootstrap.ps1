@@ -26,7 +26,7 @@ param (
 [System.Environment]::SetEnvironmentVariable('azureLocation', $azureLocation, [System.EnvironmentVariableTarget]::Machine)
 [System.Environment]::SetEnvironmentVariable('githubUser', $githubUser, [System.EnvironmentVariableTarget]::Machine)
 [System.Environment]::SetEnvironmentVariable('templateBaseUrl', $templateBaseUrl, [System.EnvironmentVariableTarget]::Machine)
-[System.Environment]::SetEnvironmentVariable('SCVMMDir', "C:\SVCMM", [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('SCVMMDir', "C:\SCVMM", [System.EnvironmentVariableTarget]::Machine)
 [System.Environment]::SetEnvironmentVariable('rdpPort', $rdpPort, [System.EnvironmentVariableTarget]::Machine)
 
 # Creating SCVMM path
@@ -53,6 +53,10 @@ New-Item -Path $Env:agentScript -ItemType directory -Force
 Start-Transcript -Path $Env:SCVMMLogsDir\Bootstrap.log
 
 $ErrorActionPreference = 'SilentlyContinue'
+
+# Installing DHCP service
+Write-Output "Installing DHCP service"
+Install-WindowsFeature -Name "DHCP" -IncludeManagementTools
 
 # Copy PowerShell Profile and Reload
 Invoke-WebRequest ($templateBaseUrl + "artifacts/PSProfile.ps1") -OutFile $PsHome\Profile.ps1
@@ -101,6 +105,7 @@ Write-Host "Fetching Artifacts"
 Invoke-WebRequest "https://raw.githubusercontent.com/Azure/arc_jumpstart_docs/main/img/wallpaper/arcbox_wallpaper_dark.png" -OutFile $Env:SCVMMDir\wallpaper.png
 Invoke-WebRequest ($templateBaseUrl + "artifacts/LogonScript.ps1") -OutFile $Env:SCVMMDir\LogonScript.ps1
 Invoke-WebRequest ($templateBaseUrl + "artifacts/SCVMM.ps1") -OutFile $Env:SCVMMDir\SCVMM.ps1
+
 
 # Disable Microsoft Edge sidebar
 $RegistryPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
