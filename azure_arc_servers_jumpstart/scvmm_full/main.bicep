@@ -7,7 +7,6 @@ param windowsAdminUsername string = 'arcdemo'
 @description('Password for Windows account. Password must have 3 of the following: 1 lower case character, 1 upper case character, 1 number, and 1 special character. The value must be between 12 and 123 characters long')
 @minLength(12)
 @maxLength(123)
-@secure()
 param windowsAdminPassword string
 
 @description('The Windows version for the VM. This will pick a fully patched image of this given Windows version')
