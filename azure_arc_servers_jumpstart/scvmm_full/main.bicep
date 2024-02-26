@@ -43,12 +43,12 @@ param networkSecurityGroupName string = 'SCVMM-NSG'
 param bastionNetworkSecurityGroupName string = 'SCVMM-Bastion-NSG'
 
 @description('Target GitHub account')
-param githubAccount string = 'lanicola'
+param githubAccount string = 'lanicolas'
 
 @description('Target GitHub branch')
 param githubBranch string = 'scvmm'
 
-var templateBaseUrl = 'https://raw.githubusercontent.com/${githubAccount}/azure_arc/${githubBranch}/svcmm_full/'
+var templateBaseUrl = 'https://raw.githubusercontent.com/${githubAccount}/azure_arc/${githubBranch}/azure_arc_servers_jumpstart/scvmm_full/'
 var bastionName = 'SCVMM-Bastion'
 var publicIpAddressName = deployBastion == false ? '${vmName}-PIP' : '${bastionName}-PIP'
 var networkInterfaceName = '${vmName}-NIC'
