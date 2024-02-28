@@ -17,9 +17,6 @@ param windowsAdminUsername string
 @secure()
 param windowsAdminPassword string
 
-@description('Name for your log analytics workspace')
-param logAnalyticsWorkspaceName string
-
 @description('Target GitHub account')
 param githubAccount string = 'lanicolas'
 
@@ -46,8 +43,6 @@ module clientVmDeployment 'clientVm/clientVm.bicep' = {
     spnClientId: spnClientId
     spnClientSecret: spnClientSecret
     spnTenantId: spnTenantId
-    workspaceName: logAnalyticsWorkspaceName
-    stagingStorageAccountName: stagingStorageAccountDeployment.outputs.storageAccountName
     templateBaseUrl: templateBaseUrl
     subnetId: mgmtArtifactsAndPolicyDeployment.outputs.subnetId
     deployBastion: deployBastion
@@ -60,9 +55,7 @@ module clientVmDeployment 'clientVm/clientVm.bicep' = {
 
 module mgmtArtifactsAndPolicyDeployment 'mgmt/mgmtArtifacts.bicep' = {
   name: 'mgmtArtifactsAndPolicyDeployment'
-  params: {
-    workspaceName: logAnalyticsWorkspaceName
-    deployBastion: deployBastion
+  params: {    deployBastion: deployBastion
     location: location
   }
 }
@@ -85,7 +78,6 @@ module addsVmDeployment 'mgmt/addsVm.bicep'= {
 module updateVNetDNSServers 'mgmt/mgmtArtifacts.bicep'= {
   name: 'updateVNetDNSServers'
   params: {
-    workspaceName: logAnalyticsWorkspaceName
     deployBastion: deployBastion
     location: location
     dnsServers: [

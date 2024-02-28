@@ -10,9 +10,6 @@ param dcSubnetName string = 'SCVMM-DC-Subnet'
 @description('Azure Region to deploy the resources to.')
 param location string = resourceGroup().location
 
-@description('SKU, leave default pergb2018')
-param sku string = 'pergb2018'
-
 @description('Choice to deploy Bastion to connect to the client VM')
 param deployBastion bool = false
 
@@ -24,11 +21,6 @@ param bastionNetworkSecurityGroupName string = 'SCVMM-Bastion-NSG'
 
 @description('DNS Server configuration')
 param dnsServers array = []
-
-var security = {
-  name: 'Security(${workspaceName})'
-  galleryName: 'Security'
-}
 
 var subnetAddressPrefix = '10.16.1.0/24'
 var addressPrefix = '10.16.0.0/16'
