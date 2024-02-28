@@ -1,5 +1,6 @@
 param (
     [string]$adminUsername,
+    [string]$adminPassword,
     [string]$spnClientId,
     [string]$spnClientSecret,
     [string]$spnTenantId,
@@ -105,8 +106,8 @@ Start-Process msiexec.exe -Wait -ArgumentList '/I AzureCLI.msi /quiet'
 Remove-Item .\AzureCLI.msi
 
 Write-Header "Fetching GitHub Artifacts"
-Invoke-WebRequest ($templateBaseUrl + "artifacts/LoginScript.ps1") -OutFile $Env:SCVMMDir\LogonScript.ps1
-Invoke-WebRequest ($templateBaseUrl + "artifacts/SCVMM.ps1") -OutFile $Env:SCVMMDir\SCVMM.ps1
+Invoke-WebRequest ($Env:templateBaseUrl + "artifacts/LoginScript.ps1") -OutFile $Env:SCVMMDir\LogonScript.ps1
+Invoke-WebRequest ($Env:templateBaseUrl + "artifacts/SCVMM.ps1") -OutFile $Env:SCVMMDir\SCVMM.ps1
 
 # Disable Microsoft Edge sidebar
 $RegistryPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
