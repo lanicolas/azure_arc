@@ -1,209 +1,213 @@
-$Env:SCVMMDir = "C:\SCVMM"
+param (
+    [string]$adminUsername,
+    [string]$spnClientId,
+    [string]$spnClientSecret,
+    [string]$spnTenantId,
+    [string]$spnAuthority,
+    [string]$subscriptionId,
+    [string]$resourceGroup,
+    [string]$arcDcName,
+    [string]$azureLocation,
+    [string]$githubUser,
+    [string]$templateBaseUrl,
+    [string]$rdpPort
+)
+
+[System.Environment]::SetEnvironmentVariable('adminUsername', $adminUsername, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('adminPassword', $adminPassword, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('spnClientID', $spnClientId, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('spnClientSecret', $spnClientSecret, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('spnTenantId', $spnTenantId, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('spnAuthority', $spnAuthority, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('SPN_CLIENT_ID', $spnClientId, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('SPN_CLIENT_SECRET', $spnClientSecret, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('SPN_TENANT_ID', $spnTenantId, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('SPN_AUTHORITY', $spnAuthority, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('resourceGroup', $resourceGroup, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('arcDcName', $arcDcName, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('subscriptionId', $subscriptionId, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('azureLocation', $azureLocation, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('githubUser', $githubUser, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('templateBaseUrl', $templateBaseUrl, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('automationTriggerAtLogon', $automationTriggerAtLogon, [System.EnvironmentVariableTarget]::Machine)
+[System.Environment]::SetEnvironmentVariable('addsDomainName', "jumpstart.local", [System.EnvironmentVariableTarget]::Machine)
+
+[System.Environment]::SetEnvironmentVariable('SCVMMDir', "C:\SCVMM", [System.EnvironmentVariableTarget]::Machine)
+
+# Creating SCVMM path
+Write-Output "Creating SCVMM path"
+$Env:SCVMM = "C:\SCVMM"
 $Env:SCVMMLogsDir = "$Env:SCVMMDir\Logs"
 $Env:SCVMMVMDir = "$Env:SCVMMDir\Virtual Machines"
-$Env:SCVMMIconDir = "$Env:SCVMMDir\Icons"
-$agentScript = "$Env:SCVMMDir\agentScript"
+$Env:agentScript = "$Env:SCVMMDir\agentScript"
+$Env:ToolsDir = "C:\Tools"
+$Env:tempDir = "C:\Temp"
 
-# Set variables to execute remote powershell scripts on guest VMs
-$nestedVMSCVMMDir = $Env:SCVMMDir
-$spnClientId = $env:spnClientId
-$spnClientSecret = $env:spnClientSecret
-$spnTenantId = $env:spnTenantId
-$subscriptionId = $env:subscriptionId
-$azureLocation = $env:azureLocation
-$resourceGroup = $env:resourceGroup
+New-Item -Path $Env:SCVMMDir -ItemType directory -Force
+New-Item -Path $Env:SCVMMLogsDir -ItemType directory -Force
+New-Item -Path $Env:SCVMMVMDir -ItemType directory -Force
+New-Item -Path $Env:ToolsDir -ItemType Directory -Force
+New-Item -Path $Env:tempDir -ItemType directory -Force
+New-Item -Path $Env:agentScript -ItemType directory -Force
 
-# Moved VHD storage account details here to keep only in place to prevent duplicates.
-$vhdSourceFolder = "https://jsvhds.blob.core.windows.net/arcbox"
-$sas = "*?si=ArcBox-RL&spr=https&sv=2022-11-02&sr=c&sig=vg8VRjM00Ya%2FGa5izAq3b0axMpR4ylsLsQ8ap3BhrnA%3D"
+Start-Transcript -Path $Env:SCVMMLogsDir\Bootstrap.log
 
-azcopy cp $vhdSourceFolder/$sas --include-pattern "ArcBox-Win2K22.vhdx" $Env:SCVMMVMDir --check-length=false --cap-mbps 1200 --log-level=ERROR
+$ErrorActionPreference = 'SilentlyContinue'
 
-################################################
-# Setup Hyper-V server before deploying VMs for each flavor
-################################################
+# Copy PowerShell Profile and Reload
+Invoke-WebRequest ($templateBaseUrl + "artifacts/PSProfile.ps1") -OutFile $PsHome\Profile.ps1
+.$PsHome\Profile.ps1
 
-    # Install and configure DHCP service (used by Hyper-V nested VMs)
-    Write-Host "Configuring DHCP Service"
-    $dnsClient = Get-DnsClient | Where-Object { $_.InterfaceAlias -eq "Ethernet" }
-    $dhcpScope = Get-DhcpServerv4Scope
-    if ($dhcpScope.Name -ne "SCVMM") {
-        Add-DhcpServerv4Scope -Name "SCVMM" `
-            -StartRange 10.10.1.100 `
-            -EndRange 10.10.1.200 `
-            -SubnetMask 255.255.255.0 `
-            -LeaseDuration 1.00:00:00 `
-            -State Active
-    }
+# Extending C:\ partition to the maximum size
+Write-Host "Extending C:\ partition to the maximum size"
+Resize-Partition -DriveLetter C -Size $(Get-PartitionSupportedSize -DriveLetter C).SizeMax
 
-    $dhcpOptions = Get-DhcpServerv4OptionValue
-    if ($dhcpOptions.Count -lt 3) {
-        Set-DhcpServerv4OptionValue -ComputerName localhost `
-            -DnsDomain $dnsClient.ConnectionSpecificSuffix `
-            -DnsServer 168.63.129.16, 10.16.2.100 `
-            -Router 10.10.1.1 `
-            -Force
-    }
+# Installing Posh-SSH PowerShell Module
+Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
+Install-Module -Name Posh-SSH -Force
 
-    # Create the NAT network
-    Write-Host "Creating Internal NAT"
-    $natName = "InternalNat"
-    $netNat = Get-NetNat
-    if ($netNat.Name -ne $natName) {
-        New-NetNat -Name $natName -InternalIPInterfaceAddressPrefix 10.10.1.0/24
-    }
+# Installing DHCP service
+Write-Output "Installing DHCP service"
+Install-WindowsFeature -Name "DHCP" -IncludeManagementTools
 
-    # Create an internal switch with NAT
-    Write-Host "Creating Internal vSwitch"
-    $switchName = 'InternalNATSwitch'
-    
-    # Verify if internal switch is already created, if not create a new switch
-    $inernalSwitch = Get-VMSwitch
-    if ($inernalSwitch.Name -ne $switchName) {
-        New-VMSwitch -Name $switchName -SwitchType Internal
-        $adapter = Get-NetAdapter | Where-Object { $_.Name -like "*" + $switchName + "*" }
+#Installing AD DS roles
 
-        # Create an internal network (gateway first)
-        Write-Host "Creating Gateway"
-        New-NetIPAddress -IPAddress 10.10.1.1 -PrefixLength 24 -InterfaceIndex $adapter.ifIndex
+Install-WindowsFeature -Name RSAT-AD-PowerShell
+Install-WindowsFeature -Name RSAT-DNS-Server
 
-        # Enable Enhanced Session Mode on Host
-        Write-Host "Enabling Enhanced Session Mode"
-        Set-VMHost -EnableEnhancedSessionMode $true
-    }
+# Installing tools
+Write-Header "Installing Chocolatey Apps"
+$chocolateyAppList = 'az.powershell,kubernetes-cli,vcredist140,microsoft-edge,azcopy10,vscode,git,7zip,ssms,dotnet-sdk,setdefaultbrowser,openssl.light'
 
-    Write-Host "Creating VM Credentials"
-    # Hard-coded username and password for the nested VMs
-    $nestedWindowsUsername = "Administrator"
-    $nestedWindowsPassword = "ArcDemo123!!"
-
-    # Create Windows credential object
-    $secWindowsPassword = ConvertTo-SecureString $nestedWindowsPassword -AsPlainText -Force
-    $winCreds = New-Object System.Management.Automation.PSCredential ($nestedWindowsUsername, $secWindowsPassword)
-
-    # Creating Hyper-V Manager desktop shortcut
-    Write-Host "Creating Hyper-V Shortcut"
-    Copy-Item -Path "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Administrative Tools\Hyper-V Manager.lnk" -Destination "C:\Users\All Users\Desktop" -Force
-
-    # Configure the SCVMM Hyper-V host to allow the nested VMs onboard as Azure Arc-enabled servers
-    Write-Header "Blocking IMDS"
-    Write-Output "Configure the SCVMM VM to allow the nested VMs onboard as Azure Arc-enabled servers"
-    Set-Service WindowsAzureGuestAgent -StartupType Disabled -Verbose
-    Stop-Service WindowsAzureGuestAgent -Force -Verbose
-
-    if (!(Get-NetFirewallRule -Name BlockAzureIMDS -ErrorAction SilentlyContinue).Enabled) {
-        New-NetFirewallRule -Name BlockAzureIMDS -DisplayName "Block access to Azure IMDS" -Enabled True -Profile Any -Direction Outbound -Action Block -RemoteAddress 169.254.169.254
-    }
-
-    $cliDir = New-Item -Path "$Env:SCVMMDir\.cli\" -Name ".servers" -ItemType Directory -Force
-    if (-not $($cliDir.Parent.Attributes.HasFlag([System.IO.FileAttributes]::Hidden))) {
-        $folder = Get-Item $cliDir.Parent.FullName -ErrorAction SilentlyContinue
-        $folder.Attributes += [System.IO.FileAttributes]::Hidden
-    }
-
-    $Env:AZURE_CONFIG_DIR = $cliDir.FullName
-
-    # Install Azure CLI extensions
-    Write-Header "Az CLI extensions"
-    az extension add --name ssh --yes --only-show-errors
-    az extension add --name log-analytics-solution --yes --only-show-errors
-    az extension add --name connectedmachine --yes --only-show-errors
-
-    # Required for CLI commands
-    Write-Header "Az CLI Login"
-    az login --service-principal --username $spnClientId --password=$spnClientSecret --tenant $spnTenantId
-    az account set -s $Env:subscriptionId
-
-    # Register Azure providers
-    Write-Header "Registering Providers"
-    az provider register --namespace Microsoft.HybridCompute --wait --only-show-errors
-    az provider register --namespace Microsoft.HybridConnectivity --wait --only-show-errors
-    az provider register --namespace Microsoft.GuestConfiguration --wait --only-show-errors
-    az provider register --namespace Microsoft.AzureArcData --wait --only-show-errors
-
-    # Create the nested VMs if not already created
-    Write-Header "Create Hyper-V VMs"
-
-## Variables
- 
-$tempFolderName = "Temp"
-$tempFolder = "C:\" + $tempFolderName +"\"
-$itemType = "Directory"
- 
-
-$SCVMMUrl = "https://download.microsoft.com/download/b/4/e/b4e3a156-de31-4fe3-b149-8cdc0b2a2f84/SCVMM_2022.exe"
-$SCVMMFile = $tempFolder + "SCVMM_2022.exe"
-$SCVMMBin = "https://download.microsoft.com/download/b/4/e/b4e3a156-de31-4fe3-b149-8cdc0b2a2f84/"
- 
-
-# Downloading the required files 
-New-Item -Path "C:\" -Name $tempFolderName -ItemType $itemType -Force | Out-Null
-
-Invoke-WebRequest -Uri $SCVMMUrl -OutFile $SCVMMFile
-for ($i=1; $i -lt 35; $i++) {
-    $BinFile = $tempFolder + "SCVMM_2022-$i.bin"
-    Invoke-WebRequest ($SCVMMBin + "SCVMM_2022-$i.bin") -OutFile $BinFile
+try {
+    choco config get cacheLocation
+}
+catch {
+    Write-Output "Chocolatey not detected, trying to install now"
+    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
 }
 
-Start-Process -Wait -FilePath .\SCVMM_2022.exe -Argument "/silent" -PassThru
-$SCVMMName = "SCVMM"
-$SCVMMvmvhdPath = "C:\System Center Virtual Machine Manager 2022\SCVMM.vhd"
+Write-Host "Chocolatey Apps Specified"
 
-Get-ChildItem "C:\System Center Virtual Machine Manager 2022" | Rename-Item -NewName "SCVMM.vhd"
+$appsToInstall = $chocolateyAppList -split "," | ForEach-Object { "$($_.Trim())" }
 
-Write-Host "Create SCVMM VM"
-if ((Get-VM -Name $SCVMMName -ErrorAction SilentlyContinue).State -ne "Running") {
-    Remove-VM -Name $SCVMMName -Force -ErrorAction SilentlyContinue
-    New-VM -Name $SCVMMName -MemoryStartupBytes 8GB -BootDevice VHD -VHDPath $SCVMMvmvhdPath -Path $Env:SCVMMVMDir -Generation 1 -Switch $switchName
-    Set-VMProcessor -VMName $SCVMMName -Count 2
-    Set-VM -Name $SCVMMName -AutomaticStartAction Start -AutomaticStopAction ShutDown
+foreach ($app in $appsToInstall) {
+    Write-Host "Installing $app"
+    & choco install $app /y -Force | Write-Output
+
 }
 
-# We always want the VMs to start with the host and shut down cleanly with the host
-Write-Host "Set VM Auto Start/Stop"
-Set-VM -Name $SCVMMName -AutomaticStartAction Start -AutomaticStopAction ShutDown
+Write-Header "Installing Azure CLI (64-bit not available via Chocolatey)"
 
-Write-Host "Enabling Guest Integration Service"
-Get-VM -Name $SCVMMName | Get-VMIntegrationService | Where-Object { -not($_.Enabled) } | Enable-VMIntegrationService -Verbose
+$ProgressPreference = 'SilentlyContinue'
+Invoke-WebRequest -Uri https://aka.ms/installazurecliwindowsx64 -OutFile .\AzureCLI.msi
+Start-Process msiexec.exe -Wait -ArgumentList '/I AzureCLI.msi /quiet'
+Remove-Item .\AzureCLI.msi
 
-# Start all the VMs
-Write-Host "Starting SCVMM VM"
-Start-VM -Name $SCVMMName
+Write-Header "Fetching GitHub Artifacts"
+Invoke-WebRequest ($templateBaseUrl + "artifacts/LoginScript.ps1") -OutFile $Env:SCVMMDir\LogonScript.ps1
+Invoke-WebRequest ($templateBaseUrl + "artifacts/SCVMM.ps1") -OutFile $Env:SCVMMDir\SCVMM.ps1
 
-# Restarting Windows VM Network Adapters
-Write-Host "Restarting Network Adapters"
-Start-Sleep -Seconds 20
-Invoke-Command -VMName $SCVMMName -ScriptBlock { Get-NetAdapter | Restart-NetAdapter } -Credential $winCreds
-Start-Sleep -Seconds 5
+# Disable Microsoft Edge sidebar
+$RegistryPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+$Name         = 'HubsSidebarEnabled'
+$Value        = '00000000'
+# Create the key if it does not exist
+If (-NOT (Test-Path $RegistryPath)) {
+  New-Item -Path $RegistryPath -Force | Out-Null
+}
+New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType DWORD -Force
 
-    # Copy installation script to nested Windows VMs
-    Write-Output "Transferring installation script to nested Windows VMs..."
-    Copy-VMFile $SCVMM -SourcePath "$agentScript\installSCVMM.ps1" -DestinationPath "$Env:SCVMMDir\installSCVMM.ps1" -CreateFullPath -FileSource Host -Force
+# Disable Microsoft Edge first-run Welcome screen
+$RegistryPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+$Name         = 'HideFirstRunExperience'
+$Value        = '00000001'
+# Create the key if it does not exist
+If (-NOT (Test-Path $RegistryPath)) {
+  New-Item -Path $RegistryPath -Force | Out-Null
+}
+New-ItemProperty -Path $RegistryPath -Name $Name -Value $Value -PropertyType DWORD -Force
 
-    # Removing the LogonScript Scheduled Task so it won't run on next reboot
-    Write-Header "Removing Logon Task"
-    if ($null -ne (Get-ScheduledTask -TaskName "ArcServersLogonScript" -ErrorAction SilentlyContinue)) {
-        Unregister-ScheduledTask -TaskName "ArcServersLogonScript" -Confirm:$false
+
+# Change RDP Port
+Write-Host "RDP port number from configuration is $rdpPort"
+if (($rdpPort -ne $null) -and ($rdpPort -ne "") -and ($rdpPort -ne "3389"))
+{
+    Write-Host "Configuring RDP port number to $rdpPort"
+    $TSPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
+    $RDPTCPpath = $TSPath + '\Winstations\RDP-Tcp'
+    Set-ItemProperty -Path $TSPath -name 'fDenyTSConnections' -Value 0
+
+    # RDP port
+    $portNumber = (Get-ItemProperty -Path $RDPTCPpath -Name 'PortNumber').PortNumber
+    Write-Host "Current RDP PortNumber: $portNumber"
+    if (!($portNumber -eq $rdpPort))
+    {
+      Write-Host Setting RDP PortNumber to $rdpPort
+      Set-ItemProperty -Path $RDPTCPpath -name 'PortNumber' -Value $rdpPort
+      Restart-Service TermService -force
     }
 
-
-
-# Changing to Jumpstart  wallpaper
-# Changing to Client VM wallpaper
-$imgPath = "$Env:SCVMMDir\wallpaper.png"
-$code = @' 
-using System.Runtime.InteropServices; 
-namespace Win32{ 
-    
-    public class Wallpaper{ 
-        [DllImport("user32.dll", CharSet=CharSet.Auto)] 
-        static extern int SystemParametersInfo (int uAction , int uParam , string lpvParam , int fuWinIni) ; 
-        
-        public static void SetWallpaper(string thePath){ 
-            SystemParametersInfo(20,0,thePath,3); 
-        }
+    #Setup firewall rules
+    if ($rdpPort -eq 3389)
+    {
+      netsh advfirewall firewall set rule group="remote desktop" new Enable=Yes
     }
-} 
-'@
+    else
+    {
+      $systemroot = get-content env:systemroot
+      netsh advfirewall firewall add rule name="Remote Desktop - Custom Port" dir=in program=$systemroot\system32\svchost.exe service=termservice action=allow protocol=TCP localport=$RDPPort enable=yes
+    }
 
-Stop-Transcript
+    Write-Host "RDP port configuration complete."
+}
+
+Write-Header "Configuring Logon Scripts"
+    # Creating scheduled task for LogonScript.ps1
+    $Trigger = New-ScheduledTaskTrigger -AtLogOn
+    $Action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument $Env:SCVMMDir\LogonScript.ps1
+    Register-ScheduledTask -TaskName "LogonScript" -Trigger $Trigger -User $adminUsername -Action $Action -RunLevel "Highest" -Force
+
+    # Joining ClientVM to AD DS domain
+    $netbiosname = $Env:addsDomainName.Split(".")[0]
+    $computername = $env:COMPUTERNAME
+
+    $domainCred = New-Object pscredential -ArgumentList ([pscustomobject]@{
+            UserName = "${netbiosname}\${adminUsername}"
+            Password = (ConvertTo-SecureString -String $adminPassword -AsPlainText -Force)[0]
+        })
+
+    $localCred = New-Object pscredential -ArgumentList ([pscustomobject]@{
+            UserName = "${computername}\${adminUsername}"
+            Password = (ConvertTo-SecureString -String $adminPassword -AsPlainText -Force)[0]
+        })
+
+
+    $Trigger = New-ScheduledTaskTrigger -AtStartup
+    $Action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "$Env:SCVMMDir\RunAfterClientVMADJoin.ps1"
+    Register-ScheduledTask -TaskName "RunAfterClientVMADJoin" -Trigger $Trigger -User SYSTEM -Action $Action -RunLevel "Highest" -Force
+    Write-Host "Registered scheduled task 'RunAfterClientVMADJoin' to run after Client VM AD join."
+
+    Write-Host "`n"
+    Write-Host "Joining client VM to domain"
+    Add-Computer -DomainName $Env:addsDomainName -LocalCredential $localCred -Credential $domainCred
+    Write-Host "Joined Client VM to $addsDomainName domain."
+
+    # Disabling Windows Server Manager Scheduled Task
+    Get-ScheduledTask -TaskName ServerManager | Disable-ScheduledTask
+
+    # Install Hyper-V and reboot
+    Write-Host "Installing Hyper-V and restart"
+    Enable-WindowsOptionalFeature -Online -FeatureName Containers -All -NoRestart
+    Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
+    Install-WindowsFeature -Name Hyper-V -IncludeAllSubFeature -IncludeManagementTools -Restart
+
+    # Clean up Bootstrap.log
+    Stop-Transcript
+    $logSuppress = Get-Content $bootstrapLogFile | Where-Object { $_ -notmatch "Host Application: powershell.exe" }
+    $logSuppress | Set-Content $bootstrapLogFile -Force
+
+    # Restart computer
+    Restart-Computer
+
+
