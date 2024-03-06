@@ -45,14 +45,8 @@ param bastionNetworkSecurityGroupName string = 'SCVMM-Bastion-NSG'
 @description('Target GitHub account')
 param githubAccount string = 'lanicolas'
 
-@description('Name of the Domain Controller subnet in the virtual network')
-param dcSubnetName string = 'ArcBoxSCVMM-DC-Subnet'
-
 @description('Target GitHub branch')
 param githubBranch string = 'scvmm'
-
-@description('Active directory domain services domain name')
-param addsDomainName string = 'jumpstart.local'
 
 var templateBaseUrl = 'https://raw.githubusercontent.com/${githubAccount}/azure_arc/${githubBranch}/azure_arc_servers_jumpstart/scvmm_full/'
 var bastionName = 'SCVMM-Bastion'
@@ -219,17 +213,6 @@ resource arcVirtualNetwork 'Microsoft.Network/virtualNetworks@2022-01-01' = {
         name: subnetName
         properties: {
           addressPrefix: subnetAddressPrefix
-          privateEndpointNetworkPolicies: 'Enabled'
-          privateLinkServiceNetworkPolicies: 'Enabled'
-          networkSecurityGroup: {
-            id: networkSecurityGroup.id
-          }
-        }
-      }
-      {
-        name: dcSubnetName
-        properties: {
-          addressPrefix: dcSubnetPrefix
           privateEndpointNetworkPolicies: 'Enabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
           networkSecurityGroup: {

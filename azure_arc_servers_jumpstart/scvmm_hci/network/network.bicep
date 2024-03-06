@@ -4,7 +4,7 @@ param virtualNetworkName string = 'SCVMM-VNet'
 @description('Name of the subnet in the virtual network')
 param subnetName string = 'SCVMM-Subnet'
 
-@description('Azure Region to deploy the resources to.')
+@description('Azure Region to deploy the Log Analytics Workspace')
 param location string = resourceGroup().location
 
 @description('Choice to deploy Bastion to connect to the client VM')
@@ -16,43 +16,15 @@ param networkSecurityGroupName string = 'SCVMM-NSG'
 @description('Name of the Bastion Network Security Group')
 param bastionNetworkSecurityGroupName string = 'SCVMM-Bastion-NSG'
 
-@description('DNS Server configuration')
-param dnsServers array = []
-
-var subnetAddressPrefix = '10.16.1.0/24'
-var addressPrefix = '10.16.0.0/16'
-var dcSubnetPrefix = '10.16.2.0/24'
+var addressPrefix = '172.16.0.0/16'
+var subnetAddressPrefix = '172.16.1.0/24'
 var bastionSubnetName = 'AzureBastionSubnet'
 var bastionSubnetRef = '${arcVirtualNetwork.id}/subnets/${bastionSubnetName}'
 var bastionName = 'SCVMM-Bastion'
-var bastionSubnetIpPrefix = '10.16.3.64/26'
+var bastionSubnetIpPrefix = '172.16.3.64/26'
 var bastionPublicIpAddressName = '${bastionName}-PIP'
-var primarySubnet = [
-  {
-    name: subnetName
-    properties: {
-      addressPrefix: subnetAddressPrefix
-      privateEndpointNetworkPolicies: 'Enabled'
-      privateLinkServiceNetworkPolicies: 'Enabled'
-      networkSecurityGroup: {
-        id: networkSecurityGroup.id
-      }
-    }
-  }
-]
-var bastionSubnet = [
-  {
-    name: 'AzureBastionSubnet'
-    properties: {
-      addressPrefix: bastionSubnetIpPrefix
-      networkSecurityGroup: {
-        id: bastionNetworkSecurityGroup.id
-      }
-    }
-  }
-]
 
-resource arcVirtualNetwork 'Microsoft.Network/virtualNetworks@2022-01-01' = {
+resource arcVirtualNetwork 'Microsoft.Network/virtualNetworks@2021-03-01' = {
   name: virtualNetworkName
   location: location
   properties: {
@@ -61,39 +33,54 @@ resource arcVirtualNetwork 'Microsoft.Network/virtualNetworks@2022-01-01' = {
         addressPrefix
       ]
     }
-    dhcpOptions: {
-      dnsServers: dnsServers
-    }
-    subnets: (deployBastion == false ) ? (primarySubnet) : (deployBastion == true ) ? union(primarySubnet,bastionSubnet) : primarySubnet
-  }
-}
-
-
-
-resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2022-01-01' = {
-  name: networkSecurityGroupName
-  location: location
-  properties: {
-    securityRules: [
+    subnets: deployBastion == true ? [
       {
-        name: 'allow_RDP_inbound'
+        name: subnetName
         properties: {
-          priority: 1009
-          protocol: 'Tcp'
-          access: 'Allow'
-          direction: 'Inbound'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '3389'
+          addressPrefix: subnetAddressPrefix
+          privateEndpointNetworkPolicies: 'Enabled'
+          privateLinkServiceNetworkPolicies: 'Enabled'
+          networkSecurityGroup: {
+            id: networkSecurityGroup.id
+          }
         }
       }
-
+      {
+        name: 'AzureBastionSubnet'
+        properties: {
+          addressPrefix: bastionSubnetIpPrefix
+          networkSecurityGroup: {
+            id: bastionNetworkSecurityGroup.id
+          }
+        }
+      }
+    ] : [
+      {
+        name: subnetName
+        properties: {
+          addressPrefix: subnetAddressPrefix
+          privateEndpointNetworkPolicies: 'Enabled'
+          privateLinkServiceNetworkPolicies: 'Enabled'
+          networkSecurityGroup: {
+            id: networkSecurityGroup.id
+          }
+        }
+      }
     ]
   }
 }
 
-resource bastionNetworkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2022-01-01' = if (deployBastion == true) {
+resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2021-03-01' = {
+  name: networkSecurityGroupName
+  location: location
+  properties: {
+    securityRules: [
+      
+    ]
+  }
+}
+
+resource bastionNetworkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2021-05-01' = if (deployBastion == true) {
   name: bastionNetworkSecurityGroupName
   location: location
   properties: {
@@ -218,7 +205,7 @@ resource bastionNetworkSecurityGroup 'Microsoft.Network/networkSecurityGroups@20
   }
 }
 
-resource publicIpAddress 'Microsoft.Network/publicIPAddresses@2022-01-01' = if (deployBastion == true) {
+resource publicIpAddress 'Microsoft.Network/publicIPAddresses@2021-05-01' = if (deployBastion == true) {
   name: bastionPublicIpAddressName
   location: location
   properties: {
@@ -231,7 +218,7 @@ resource publicIpAddress 'Microsoft.Network/publicIPAddresses@2022-01-01' = if (
   }
 }
 
-resource bastionHost 'Microsoft.Network/bastionHosts@2022-01-01' = if (deployBastion == true) {
+resource bastionHost 'Microsoft.Network/bastionHosts@2021-05-01' = if (deployBastion == true) {
   name: bastionName
   location: location
   properties: {

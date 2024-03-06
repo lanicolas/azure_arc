@@ -20,7 +20,7 @@ $sas = "*?si=ArcBox-RL&spr=https&sv=2022-11-02&sr=c&sig=vg8VRjM00Ya%2FGa5izAq3b0
 azcopy cp $vhdSourceFolder/$sas --include-pattern "ArcBox-Win2K22.vhdx" $Env:SCVMMVMDir --check-length=false --cap-mbps 1200 --log-level=ERROR
 
 ################################################
-# Setup Hyper-V server before deploying VMs for each flavor
+# Setup Hyper-V server before deploying VMs 
 ################################################
 
     # Install and configure DHCP service (used by Hyper-V nested VMs)
@@ -119,7 +119,6 @@ azcopy cp $vhdSourceFolder/$sas --include-pattern "ArcBox-Win2K22.vhdx" $Env:SCV
     az provider register --namespace Microsoft.HybridCompute --wait --only-show-errors
     az provider register --namespace Microsoft.HybridConnectivity --wait --only-show-errors
     az provider register --namespace Microsoft.GuestConfiguration --wait --only-show-errors
-    az provider register --namespace Microsoft.AzureArcData --wait --only-show-errors
 
     # Create the nested VMs if not already created
     Write-Header "Create Hyper-V VMs"

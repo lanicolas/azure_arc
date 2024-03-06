@@ -20,7 +20,7 @@ param location string = resourceGroup().location
 param subnetId string
 
 param resourceTags object = {
-  Project: 'jumpstart'
+  Project: 'jumpstart_SCVMM'
 }
 
 @description('Client id of the service principal')
@@ -29,13 +29,15 @@ param spnClientId string
 @description('Client secret of the service principal')
 @secure()
 param spnClientSecret string
-param spnAuthority string = environment().authentication.loginEndpoint
 
 @description('Tenant id of the service principal')
 param spnTenantId string
 
-@secure()
-param arcDcName string = 'arcdatactrl'
+@description('Name for the staging storage account using to hold kubeconfig. This value is passed into the template as an output from mgmtStagingStorage.json')
+param stagingStorageAccountName string
+
+@description('Name for the environment Azure Log Analytics workspace')
+param workspaceName string
 
 @description('The base URL used for accessing artifacts and automation artifacts.')
 param templateBaseUrl string
@@ -43,7 +45,16 @@ param templateBaseUrl string
 @description('Choice to deploy Bastion to connect to the client VM')
 param deployBastion bool = false
 
+@description('Option to deploy Resource Bridge with SCVMM')
+param deployResourceBridge bool = true
 
+@description('Public DNS to use for the domain')
+param natDNS string = '8.8.8.8'
+
+@description('Override default RDP port using this parameter. Default is 3389. No changes will be made to the client VM.')
+param rdpPort string = '3389'
+
+var encodedPassword = base64(windowsAdminPassword)
 var bastionName = 'SCVMM-Bastion'
 var publicIpAddressName = deployBastion == false ? '${vmName}-PIP' : '${bastionName}-PIP'
 var networkInterfaceName = '${vmName}-NIC'
@@ -52,7 +63,7 @@ var PublicIPNoBastion = {
   id: publicIpAddress.id
 }
 
-resource networkInterface 'Microsoft.Network/networkInterfaces@2022-01-01' = {
+resource networkInterface 'Microsoft.Network/networkInterfaces@2021-03-01' = {
   name: networkInterfaceName
   location: location
   properties: {
@@ -64,14 +75,14 @@ resource networkInterface 'Microsoft.Network/networkInterfaces@2022-01-01' = {
             id: subnetId
           }
           privateIPAllocationMethod: 'Dynamic'
-          publicIPAddress: deployBastion == false ? PublicIPNoBastion : json('null')
+          publicIPAddress: deployBastion == false ? PublicIPNoBastion : null
         }
       }
     ]
   }
 }
 
-resource publicIpAddress 'Microsoft.Network/publicIpAddresses@2022-01-01' = if (deployBastion == false) {
+resource publicIpAddress 'Microsoft.Network/publicIpAddresses@2021-03-01' = if (deployBastion == false) {
   name: publicIpAddressName
   location: location
   properties: {
@@ -90,7 +101,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-03-01' = {
   tags: resourceTags
   properties: {
     hardwareProfile: {
-      vmSize: 'Standard_D16s_v4'
+      vmSize: 'Standard_E32s_v5'
     }
     storageProfile: {
       osDisk: {
@@ -108,6 +119,19 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-03-01' = {
         sku: windowsOSVersion
         version: 'latest'
       }
+      dataDisks: [
+        {
+          name: 'ASHCIHost001_DataDisk_0'
+          diskSizeGB: 256
+          createOption: 'Empty'
+          lun: 0
+          caching: 'None'
+          writeAcceleratorEnabled: false
+          managedDisk: {
+            storageAccountType: 'Premium_LRS'
+          }
+        }
+      ]
     }
     networkProfile: {
       networkInterfaces: [
@@ -132,9 +156,6 @@ resource vmBootstrap 'Microsoft.Compute/virtualMachines/extensions@2022-03-01' =
   parent: vm
   name: 'Bootstrap'
   location: location
-  tags: {
-    displayName: 'config-choco'
-  }
   properties: {
     publisher: 'Microsoft.Compute'
     type: 'CustomScriptExtension'
@@ -142,9 +163,9 @@ resource vmBootstrap 'Microsoft.Compute/virtualMachines/extensions@2022-03-01' =
     autoUpgradeMinorVersion: true
     protectedSettings: {
       fileUris: [
-        uri(templateBaseUrl, 'artifacts/Bootstrap.ps1')
+        uri(templateBaseUrl, 'artifacts/PowerShell/Bootstrap.ps1')
       ]
-      commandToExecute: 'powershell.exe -ExecutionPolicy Bypass -File Bootstrap.ps1 -adminUsername ${windowsAdminUsername} -adminPassword ${windowsAdminPassword} -spnClientId ${spnClientId} -spnClientSecret ${spnClientSecret} -spnTenantId ${spnTenantId} -spnAuthority ${spnAuthority} -subscriptionId ${subscription().subscriptionId} -resourceGroup ${resourceGroup().name} -arcDcName ${arcDcName} -azureLocation ${location} -templateBaseUrl ${templateBaseUrl}'
+      commandToExecute: 'powershell.exe -ExecutionPolicy Bypass -File Bootstrap.ps1 -adminUsername ${windowsAdminUsername} -adminPassword ${encodedPassword} -spnClientId ${spnClientId} -spnClientSecret ${spnClientSecret} -spnTenantId ${spnTenantId} -subscriptionId ${subscription().subscriptionId} -resourceGroup ${resourceGroup().name} -azureLocation ${location} -stagingStorageAccountName ${stagingStorageAccountName} -workspaceName ${workspaceName} -templateBaseUrl ${templateBaseUrl} -deployResourceBridge ${deployResourceBridge} -natDNS ${natDNS} -rdpPort ${rdpPort}'
     }
   }
 }
