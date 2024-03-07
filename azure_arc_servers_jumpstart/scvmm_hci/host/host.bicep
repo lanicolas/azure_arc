@@ -121,7 +121,18 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-03-01' = {
       }
       dataDisks: [
         {
-          name: 'ASHCIHost001_DataDisk_0'
+          name: 'SCVMMHost001_DataDisk_0'
+          diskSizeGB: 256
+          createOption: 'Empty'
+          lun: 0
+          caching: 'None'
+          writeAcceleratorEnabled: false
+          managedDisk: {
+            storageAccountType: 'Premium_LRS'
+          }
+        }
+        {
+          name: 'SCVMMHost002_DataDisk_0'
           diskSizeGB: 256
           createOption: 'Empty'
           lun: 0

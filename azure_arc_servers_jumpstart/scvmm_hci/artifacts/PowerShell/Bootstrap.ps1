@@ -47,7 +47,7 @@ New-Item -Path $scvmmPath -ItemType directory -Force
 # Downloading configuration file
 $ConfigurationDataFile = "$scvmmPath\SCVMM-Config.psd1"
 [System.Environment]::SetEnvironmentVariable('SCVMMConfigFile', $ConfigurationDataFile,[System.EnvironmentVariableTarget]::Machine)
-Invoke-WebRequest ($templateBaseUrl + "artifacts/PowerShell/SCVMM-Config.psd1") -OutFile $ConfigurationDataFile
+Invoke-WebRequest ($Env:templateBaseUrl + "artifacts/PowerShell/SCVMM-Config.psd1") -OutFile $ConfigurationDataFile
 
 # Importing configuration data
 $SCVMMConfig = Import-PowerShellDataFile -Path $ConfigurationDataFile
@@ -90,12 +90,12 @@ Invoke-WebRequest -Uri https://aka.ms/installazurecliwindowsx64 -OutFile .\Azure
 Start-Process msiexec.exe -Wait -ArgumentList '/I AzureCLI.msi /quiet'
 Remove-Item .\AzureCLI.msi
 
-Write-Host "Downloading Azure Stack scvmm configuration scripts"
-Invoke-WebRequest "https://raw.githubusercontent.com/microsoft/azure_arc/main/img/jumpstart_wallpaper.png" -OutFile $scvmmPath\wallpaper.png
-Invoke-WebRequest https://aka.ms/wacdownload -OutFile "$($SCVMMConfig.Paths["WACDir"])\WindowsAdminCenter.msi"
-Invoke-WebRequest ($templateBaseUrl + "artifacts/PowerShell/SCVMMLogonScript.ps1") -OutFile $scvmmPath\SCVMMLogonScript.ps1
-Invoke-WebRequest ($templateBaseUrl + "artifacts/PowerShell/New-SCVMM.ps1") -OutFile $scvmmPath\New-SCVMM.ps1
-Invoke-WebRequest ($templateBaseUrl + "artifacts/PowerShell/Configure-VMLogicalNetwork.ps1") -OutFile $scvmmPath\Configure-VMLogicalNetwork.ps1
+Write-Host "Downloading SCVMM configuration scripts"
+Invoke-WebRequest "https://raw.githubusercontent.com/Azure/arc_jumpstart_docs/main/img/wallpaper/jumpstart_wallpaper_dark.png" -OutFile $scvmmPath\wallpaper.png
+Invoke-WebRequest ($Env:templateBaseUrl + "artifacts/PowerShell/SCVMMLogonScript.ps1") -OutFile $scvmmPath\SCVMMLogonScript.ps1
+Invoke-WebRequest ($Env:templateBaseUrl + "artifacts/PowerShell/New-SCVMM.ps1") -OutFile $scvmmPath\New-SCVMM.ps1
+Invoke-WebRequest ($Env:templateBaseUrl + "artifacts/PowerShell/Configure-VMLogicalNetwork.ps1") -OutFile $scvmmPath\Configure-VMLogicalNetwork.ps1
+Invoke-WebRequest ($Env:templateBaseUrl + "artifacts/PowerShell/SCVMM-Config.psd1") -OutFile $scvmmPath\SCVMM-Config.psd1
 
 # Replace password and DNS placeholder
 Write-Host "Updating config placeholders with injected values."
@@ -133,7 +133,7 @@ Enable-WSManCredSSP -Role Client -DelegateComputer $Env:COMPUTERNAME -Force | Ou
 Write-Host "Creating scheduled task for SCVMMLogonScript.ps1"
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
 $Action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument $scvmmPath\SCVMMLogonScript.ps1
-Register-ScheduledTask -TaskName "SCVMMLogonScript" -Trigger $Trigger -User $adminUsername -Action $Action -RunLevel "Highest" -Force
+Register-ScheduledTask -TaskName "SCVMMLogonScript" -Trigger $Trigger -User $Env:adminUsername -Action $Action -RunLevel "Highest" -Force
 
 # Disable Edge 'First Run' Setup
 Write-Host "Configuring Microsoft Edge."

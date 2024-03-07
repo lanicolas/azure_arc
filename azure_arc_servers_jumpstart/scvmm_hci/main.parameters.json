@@ -3,13 +3,13 @@
     "contentVersion": "1.0.0.0",
     "parameters": {
         "spnClientId": {
-            "value": "<your service principal client id>"
+            "value": "6cf5a34b-da48-4f69-822d-5730e284539b"
         },
         "spnClientSecret": {
-            "value": "<your service principal secret>"
+            "value": "Igw8Q~rWV-zNIl2__DjyoXAE~TBGpBOSOTooSdBE"
         },
         "spnTenantId": {
-            "value": "<your service principal tenant id>"
+            "value": "72f988bf-86f1-41af-91ab-2d7cd011db47"
         },
         "windowsAdminUsername": {
             "value": "arcdemo"
@@ -23,4 +23,5 @@
         "deployBastion": {
             "value": false
         }
-    }}
+    }
+}
