@@ -23,6 +23,7 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2021-06-01' = {
       name: sku
     }
   }
+  
 }
 
 resource VMInsightsMicrosoftOperationalInsights 'Microsoft.OperationsManagement/solutions@2015-11-01-preview' = {

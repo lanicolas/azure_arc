@@ -29,7 +29,12 @@ function BITSRequest {
     Write-Progress -Activity "Downloading File $filename..." -Status "Ready" -Completed
     $ProgressPreference = "SilentlyContinue"
 }
-    
+function Get-FormattedWACMAC {
+    Param(
+        $SCVMMConfig
+    )
+    return $SCVMMConfig.WACMAC -replace '..(?!$)', '$&-'
+}
 function New-InternalSwitch {
     param (
         $SCVMMConfig
@@ -618,7 +623,7 @@ function Set-FabricNetwork {
         $internetIndex = (Get-NetAdapter | Where-Object { $_.Name -eq "Internet" }).ifIndex
         Start-Sleep -Seconds 15
         New-NetIPAddress -IPAddress $internetIP -PrefixLength 24 -InterfaceIndex $internetIndex -DefaultGateway $internetGW -AddressFamily IPv4 | Out-Null
-        Set-DnsClientServerAddress -InterfaceIndex $internetIndex -ServerAddresses ($SCVMMConfig.natDNS) | Out-Null
+        Set-DnsClientServerAddress -InterfaceIndex $internetIndex -ServerAddresses ("8.8.8.8") | Out-Null
 
         # Enable Large MTU
         Write-Host "Configuring MTU on all Adapters"
@@ -783,7 +788,7 @@ function New-DCVM {
 
             # Set DNS Forwarder
             Write-Host "Adding DNS Forwarders"
-            Add-DnsServerForwarder $SCVMMConfig.natDNS
+            Add-DnsServerForwarder "8.8.8.8"
 
             # Create Enterprise CA 
             Write-Host "Installing and Configuring Active Directory Certificate Services and Certificate Templates"    
@@ -1018,12 +1023,12 @@ function New-RouterVM {
 }
 
 function Test-InternetConnect {
-    $testIP = $SCVMMConfig.natDNS
+    $testIP = "8.8.8.8"
     $ErrorActionPreference = "Stop"  
     $intConnect = Test-NetConnection -ComputerName $testip -Port 53
 
     if (!$intConnect.TcpTestSucceeded) {
-        throw "Unable to connect to DNS by pinging $($SCVMMConfig.natDNS) - Network access to this IP is required."
+        throw "Unable to connect to DNS by pinging 8.8.8.8 - Network access to this IP is required."
     }
 }
 
@@ -1057,7 +1062,7 @@ $guiVHDXPath = $SCVMMConfig.guiVHDXPath
 $azSCVMMVHDXPath = $SCVMMConfig.azSCVMMVHDXPath
 $HostVMPath = $SCVMMConfig.HostVMPath
 $InternalSwitch = $SCVMMConfig.InternalSwitch
-$natDNS = $SCVMMConfig.natDNS
+$natDNS = "8.8.8.8"
 $natSubnet = $SCVMMConfig.natSubnet
 
 Import-Module Hyper-V
@@ -1074,7 +1079,7 @@ foreach ($path in $SCVMMConfig.Paths.GetEnumerator()) {
 }
 
 # Download SCVMM VHDs
-BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"}
+ -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"}
 BITSRequest -Params @{'Uri'='https://aka.ms/VHDHash-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.sha256" }
 $checksum = Get-FileHash -Path "$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"
 $hash = Get-Content -Path "$($SCVMMConfig.Paths.VHDDir)\GUI.sha256"
@@ -1085,9 +1090,6 @@ else {
     Write-Error "GUI.vhdx is corrupt. Aborting deployment. Re-run C:\SCVMM\SCVMMLogonScript.ps1 to retry"
     throw 
 }
-# BITSRequest -Params @{'Uri'='https://partner-images.canonical.com/hyper-v/desktop/focal/current/ubuntu-focal-hyperv-amd64-ubuntu-desktop-hyperv.vhdx.zip'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx.zip"}
-# Expand-Archive -Path "$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx.zip" -DestinationPath $($SCVMMConfig.Paths.VHDDir)
-# Move-Item -Path "$($SCVMMConfig.Paths.VHDDir)\livecd.ubuntu-desktop-hyperv.vhdx" -Destination "$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx"
 
 # Set credentials
 $localCred = new-object -typename System.Management.Automation.PSCredential `
@@ -1120,6 +1122,8 @@ Set-VMHost -VirtualHardDiskPath $HostVMPath -VirtualMachinePath $HostVMPath -Ena
 
 Write-Host "Copying VHDX Files to Host virtualization drive"
 $guipath = "$HostVMPath\GUI.vhdx"
+
+Start-Sleep 30
 Copy-Item -Path $SCVMMConfig.guiVHDXPath -Destination $guipath -Force | Out-Null
 
 ################################################################################
@@ -1131,7 +1135,7 @@ $mgmtMac = New-ManagementVM -Name $($SCVMMConfig.MgmtHostConfig.Hostname) -VHDXP
 Set-MGMTVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
 
 # Create the Hyperv VM (HypervVM)
-Write-Host "[Build environment - Step 3/10] Creating HyeprV VM (HyperV)..." -ForegroundColor Green
+Write-Host "[Build environment - Step 3/10] Creating HyperV VM (HyperV)..." -ForegroundColor Green
 $mgmtMac = New-ManagementVM -Name $($SCVMMConfig.NodeHostConfig.Hostname) -VHDXPath "$HostVMPath\GUI.vhdx" -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
 Set-MGMTVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
     

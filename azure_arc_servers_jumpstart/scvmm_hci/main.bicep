@@ -80,4 +80,7 @@ module hostDeployment 'host/host.bicep' = {
     location: location
     rdpPort: rdpPort
   }
+  dependsOn: [
+    networkDeployment
+  ]
 }

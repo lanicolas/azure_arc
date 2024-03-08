@@ -48,7 +48,7 @@
     HostVMDriveLetter = "V"
     HostVMPath        = "V:\VMs"                              # This value controls the path where the Nested VMs will be stored on all hosts.
     guiVHDXPath       = "C:\SCVMM\VHD\gui.vhdx"              # This value controls the location of the GUI VHDX.              
-    azsHCIVHDXPath    = "C:\SCVMM\VHD\azshci.vhdx"           # This value controls the location of the Azure Stack HCI VHDX. \
+    azshypervVHDXPath    = "C:\SCVMM\VHD\hyperv.vhdx"           # This value controls the location of the hyperv VHDX. \
     
     MgmtHostConfig = @{
         Hostname = "AzSMGMT"
@@ -92,7 +92,7 @@
     natHostVMSwitchName                  = "InternalNAT"
     natConfigure                         = $true
     natSubnet                            = "192.168.46.0/24"                      # This value is the subnet is the NAT router will use to route to  AzSMGMT to access the Internet. It can be any /24 subnet and is only used for routing.
-    natDNS                               = "%staging-natDNS%"                     # Do not change - can be configured by passing the optioanl natDNS parameter to the ARM deployment.
+    natDNS                               = "8.8.8.8"                     
 
     # Global MTU
     SDNLABMTU                            = 9014                                   # Controls the MTU for all Hosts. 

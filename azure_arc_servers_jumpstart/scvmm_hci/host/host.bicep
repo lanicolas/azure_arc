@@ -135,7 +135,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2022-03-01' = {
           name: 'SCVMMHost002_DataDisk_0'
           diskSizeGB: 256
           createOption: 'Empty'
-          lun: 0
+          lun: 1
           caching: 'None'
           writeAcceleratorEnabled: false
           managedDisk: {
