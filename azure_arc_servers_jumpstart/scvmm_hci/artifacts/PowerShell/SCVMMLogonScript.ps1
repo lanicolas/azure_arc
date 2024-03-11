@@ -39,16 +39,6 @@ az provider register --namespace Microsoft.ExtendedLocation --wait
 az provider register --namespace Microsoft.OperationsManagement --wait
 az provider register --namespace Microsoft.ResourceConnector --wait
 
-#############################################################
-# Install VSCode extensions
-#############################################################
-
-Write-Host "[$(Get-Date -Format t)] INFO: Installing VSCode extensions: " + ($SCVMMConfig.VSCodeExtensions -join ', ') -ForegroundColor Gray
-foreach ($extension in $SCVMMConfig.VSCodeExtensions) {
-    $WarningPreference = "SilentlyContinue"
-    code --install-extension $extension 2>&1 | Out-File -Append -FilePath ($SCVMMConfig.Paths.LogsDir + "\Tools.log")
-    $WarningPreference = "Continue"
-}
 
 #####################################################################
 # Configure virtualization infrastructure

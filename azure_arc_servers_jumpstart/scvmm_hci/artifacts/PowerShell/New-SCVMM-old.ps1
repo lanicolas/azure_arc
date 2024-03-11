@@ -2,7 +2,7 @@
 $Env:SCVMMDir = "C:\SCVMM"
 $Env:SCVMMLogsDir = "C:\SCVMM\Logs"
 
-Start-Transcript -Path $Env:SCVMMLogsDir\New-SCVMM.log
+Start-Transcript -Path $Env:SCVMMLogsDir\New-SCVMMenvironment.log
 $starttime = Get-Date
 
 # Import Configuration data file
@@ -29,7 +29,12 @@ function BITSRequest {
     Write-Progress -Activity "Downloading File $filename..." -Status "Ready" -Completed
     $ProgressPreference = "SilentlyContinue"
 }
-    
+function Get-FormattedWACMAC {
+    Param(
+        $SCVMMConfig
+    )
+    return $SCVMMConfig.WACMAC -replace '..(?!$)', '$&-'
+}
 function New-InternalSwitch {
     param (
         $SCVMMConfig
@@ -61,11 +66,57 @@ function New-InternalSwitch {
     } 
 }
 
-function Get-FormattedWACMAC {
-    Param(
+
+function Restart-VMs {
+    Param (
+        $SCVMMConfig,
+        [PSCredential]$Credential
+    )
+    foreach ($VM in $SCVMMConfig.NodeHostConfig) {
+        Write-Host "Restarting VM: $($VM.Hostname)"
+        Invoke-Command -VMName $VM.Hostname -Credential $Credential -ScriptBlock {
+            Restart-Computer -Force
+        }
+    }
+    Write-Host "Restarting VM: $($SCVMMConfig.MgmtHostConfig.Hostname)"
+    Invoke-Command -VMName $SCVMMConfig.MgmtHostConfig.Hostname -Credential $Credential -ScriptBlock {
+        Restart-Computer -Force
+    }
+    Start-Sleep -Seconds 30
+}
+
+function New-ManagementVM {
+    Param (
+        $Name,
+        $VHDXPath,
+        $VMSwitch,
         $SCVMMConfig
     )
-    return $SCVMMConfig.WACMAC -replace '..(?!$)', '$&-'
+    Write-Host "Creating VM $Name"
+    # Create disks
+    $VHDX1 = New-VHD -ParentPath $VHDXPath -Path "$($SCVMMConfig.HostVMPath)\$Name.vhdx" -Differencing 
+    $VHDX2 = New-VHD -Path "$($SCVMMConfig.HostVMPath)\$Name-Data.vhdx" -SizeBytes 268435456000 -Dynamic
+
+    # Create VM
+    # Create Nested VM
+    New-VM -Name $Name -MemoryStartupBytes $SCVMMConfig.AzSMGMTMemoryinGB -VHDPath $VHDX1.Path -SwitchName $VMSwitch -Generation 2 | Out-Null
+    Add-VMHardDiskDrive -VMName $Name -Path $VHDX2.Path
+    Set-VM -Name $Name -ProcessorCount $SCVMMConfig.AzSMGMTProcCount -AutomaticStartAction Start | Out-Null
+
+    Get-VMNetworkAdapter -VMName $Name | Rename-VMNetworkAdapter -NewName "SDN"
+    Get-VMNetworkAdapter -VMName $Name | Set-VMNetworkAdapter -DeviceNaming On -StaticMacAddress  ("{0:D12}" -f ( Get-Random -Minimum 0 -Maximum 99999 ))
+    Add-VMNetworkAdapter -VMName $Name -Name SDN2 -DeviceNaming On -SwitchName $VMSwitch
+    $vmMac = (((Get-VMNetworkAdapter -Name SDN -VMName $Name).MacAddress) -replace '..(?!$)', '$&-')
+
+    Get-VM $Name | Set-VMProcessor -ExposeVirtualizationExtensions $true
+    Get-VM $Name | Set-VMMemory -DynamicMemoryEnabled $false
+    Get-VM $Name | Get-VMNetworkAdapter | Set-VMNetworkAdapter -MacAddressSpoofing On
+
+    Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName SDN -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-200
+    Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName SDN2 -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-200  
+
+    Enable-VMIntegrationService -VMName $Name -Name "Guest Service Interface"
+    return $vmMac
 }
 
 function GenerateAnswerFile {
@@ -299,97 +350,6 @@ $components</settings>
     return $UnattendXML
 }
 
-function Restart-VMs {
-    Param (
-        $SCVMMConfig,
-        [PSCredential]$Credential
-    )
-    foreach ($VM in $SCVMMConfig.NodeHostConfig) {
-        Write-Host "Restarting VM: $($VM.Hostname)"
-        Invoke-Command -VMName $VM.Hostname -Credential $Credential -ScriptBlock {
-            Restart-Computer -Force
-        }
-    }
-    Write-Host "Restarting VM: $($SCVMMConfig.MgmtHostConfig.Hostname)"
-    Invoke-Command -VMName $SCVMMConfig.MgmtHostConfig.Hostname -Credential $Credential -ScriptBlock {
-        Restart-Computer -Force
-    }
-    Start-Sleep -Seconds 30
-}
-
-function New-ManagementVM {
-    Param (
-        $Name,
-        $VHDXPath,
-        $VMSwitch,
-        $SCVMMConfig
-    )
-    Write-Host "Creating VM $Name"
-    # Create disks
-    $VHDX1 = New-VHD -ParentPath $VHDXPath -Path "$($SCVMMConfig.HostVMPath)\$Name.vhdx" -Differencing 
-    $VHDX2 = New-VHD -Path "$($SCVMMConfig.HostVMPath)\$Name-Data.vhdx" -SizeBytes 268435456000 -Dynamic
-
-    # Create VM
-    # Create Nested VM
-    New-VM -Name $Name -MemoryStartupBytes $SCVMMConfig.AzSMGMTMemoryinGB -VHDPath $VHDX1.Path -SwitchName $VMSwitch -Generation 2 | Out-Null
-    Add-VMHardDiskDrive -VMName $Name -Path $VHDX2.Path
-    Set-VM -Name $Name -ProcessorCount $SCVMMConfig.AzSMGMTProcCount -AutomaticStartAction Start | Out-Null
-
-    Get-VMNetworkAdapter -VMName $Name | Rename-VMNetworkAdapter -NewName "SDN"
-    Get-VMNetworkAdapter -VMName $Name | Set-VMNetworkAdapter -DeviceNaming On -StaticMacAddress  ("{0:D12}" -f ( Get-Random -Minimum 0 -Maximum 99999 ))
-    Add-VMNetworkAdapter -VMName $Name -Name SDN2 -DeviceNaming On -SwitchName $VMSwitch
-    $vmMac = (((Get-VMNetworkAdapter -Name SDN -VMName $Name).MacAddress) -replace '..(?!$)', '$&-')
-
-    Get-VM $Name | Set-VMProcessor -ExposeVirtualizationExtensions $true
-    Get-VM $Name | Set-VMMemory -DynamicMemoryEnabled $false
-    Get-VM $Name | Get-VMNetworkAdapter | Set-VMNetworkAdapter -MacAddressSpoofing On
-
-    Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName SDN -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-200
-    Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName SDN2 -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-200  
-
-    Enable-VMIntegrationService -VMName $Name -Name "Guest Service Interface"
-    return $vmMac
-}
-
-function New-SCVMMNodeVM {
-    param (
-        $Name,
-        $VHDXPath,
-        $VMSwitch,
-        $SCVMMConfig
-    )
-    Write-Host "Creating VM $Name"
-    # Create disks
-    $VHDX1 = New-VHD -ParentPath $VHDXPath -Path "$($SCVMMConfig.HostVMPath)\$Name.vhdx" -Differencing 
-    $VHDX2 = New-VHD -Path "$($SCVMMConfig.HostVMPath)\$Name-Data.vhdx" -SizeBytes 268435456000 -Dynamic
-
-    # Create Nested VM
-    New-VM -Name $Name -MemoryStartupBytes $SCVMMConfig.NestedVMMemoryinGB -VHDPath $VHDX1.Path -SwitchName $VMSwitch -Generation 2 | Out-Null
-    Add-VMHardDiskDrive -VMName $Name -Path $VHDX2.Path
-
-
-    Set-VM -Name $Name -ProcessorCount 20 -AutomaticStartAction Start
-    Get-VMNetworkAdapter -VMName $Name | Rename-VMNetworkAdapter -NewName "SDN"
-    Get-VMNetworkAdapter -VMName $Name | Set-VMNetworkAdapter -DeviceNaming On -StaticMacAddress  ("{0:D12}" -f ( Get-Random -Minimum 0 -Maximum 99999 ))
-    # Add-VMNetworkAdapter -VMName $Name -Name SDN2 -DeviceNaming On -SwitchName $VMSwitch
-    $vmMac = ((Get-VMNetworkAdapter -Name SDN -VMName $Name).MacAddress) -replace '..(?!$)', '$&-'
-
-    Add-VMNetworkAdapter -VMName $Name -SwitchName $VMSwitch -DeviceNaming On -Name StorageA
-    Add-VMNetworkAdapter -VMName $Name -SwitchName $VMSwitch -DeviceNaming On -Name StorageB
-
-    Get-VM $Name | Set-VMProcessor -ExposeVirtualizationExtensions $true
-    Get-VM $Name | Set-VMMemory -DynamicMemoryEnabled $false
-    Get-VM $Name | Get-VMNetworkAdapter | Set-VMNetworkAdapter -MacAddressSpoofing On
-
-    Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName SDN -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-200
-    # Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName SDN2 -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-200  
-    Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName StorageA -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-800
-    Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName StorageB -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-800 
-
-    Enable-VMIntegrationService -VMName $Name -Name "Guest Service Interface"
-    return $vmMac
-}
-
 function Set-MGMTVHDX {
     param (
         $VMMac,
@@ -401,7 +361,7 @@ function Set-MGMTVHDX {
     Install-WindowsFeature -Vhd $path -Name Hyper-V, RSAT-Hyper-V-Tools, Hyper-V-Powershell -Confirm:$false | Out-Null
     Start-Sleep -Seconds 20
 
-    # Mount VHDX - bunch of kludgey logic in here to deal with different partition layouts on the GUI and SCVMM VHD images
+    # Mount VHDX - bunch of kludgey logic in here to deal with different partition layouts on the GUI and HCI VHD images
     Write-Host "Mounting VHDX file at $path"
     [string]$MountedDrive = ""
     $partition = Mount-VHD -Path $path -Passthru | Get-Disk | Get-Partition -PartitionNumber 3
@@ -431,57 +391,13 @@ function Set-MGMTVHDX {
     Write-Host "Injecting files into $path"
     Copy-Item -Path "$Env:SCVMMDir\SCVMM-Config.psd1" -Destination ($MountedDrive + ":\") -Recurse -Force
     Copy-Item -Path $guiVHDXPath -Destination ($MountedDrive + ":\VMs\Base\GUI.vhdx") -Force
-    Copy-Item -Path $azSSCVMMVHDXPath -Destination ($MountedDrive + ":\VMs\Base\AzSSCVMM.vhdx") -Force
+    Copy-Item -Path $azSCVMMVHDXPath -Destination ($MountedDrive + ":\VMs\Base\AzSHCI.vhdx") -Force
     New-Item -Path ($MountedDrive + ":\") -Name "Windows Admin Center" -ItemType Directory -Force | Out-Null
     Copy-Item -Path "$($SCVMMConfig.Paths["WACDir"])\*.msi" -Destination ($MountedDrive + ":\Windows Admin Center") -Recurse -Force  
 
     # Dismount VHDX
     Write-Host "Dismounting VHDX File at path $path"
     Dismount-VHD $path 
-}
-
-function Set-SCVMMNodeVHDX {
-    param (
-        $Hostname,
-        $IPAddress,
-        $VMMac,
-        $SCVMMConfig
-    )
-    $DriveLetter = $($SCVMMConfig.HostVMPath).Split(':')
-    $path = (("\\localhost\") + ($DriveLetter[0] + "$") + ($DriveLetter[1]) + "\" + $Hostname + ".vhdx") 
-    Write-Host "Performing offline installation of Hyper-V on $Hostname"
-    Install-WindowsFeature -Vhd $path -Name Hyper-V, RSAT-Hyper-V-Tools, Hyper-V-Powershell -Confirm:$false | Out-Null
-    Start-Sleep -Seconds 5
-
-    # Install necessary tools to converge 
-    Write-Host "Installing and Configuring Failover ing on $Hostname"
-    Install-WindowsFeature -Vhd $path -Name Failover-ing -IncludeAllSubFeature -IncludeManagementTools | Out-Null 
-    Start-Sleep -Seconds 15
-
-    Write-Host "Mounting VHDX file at $path"
-    $partition = Mount-VHD -Path $path -Passthru | Get-Disk | Get-Partition -PartitionNumber 3
-    if (!$partition.DriveLetter) {
-        $MountedDrive = "Y"
-        $partition | Set-Partition -NewDriveLetter $MountedDrive
-    }   
-    else {
-        $MountedDrive = $partition.DriveLetter
-    }
-
-    Write-Host "Injecting answer file to $path"
-    $UnattendXML = GenerateAnswerFile -HostName $Hostname -IPAddress $IPAddress -VMMac $VMMac -SCVMMConfig $SCVMMConfig
-    Write-Host "Mounted Disk Volume is: $MountedDrive" 
-    $PantherDir = Get-ChildItem -Path ($MountedDrive + ":\Windows")  -Filter "Panther"
-    if (!$PantherDir) { New-Item -Path ($MountedDrive + ":\Windows\Panther") -ItemType Directory -Force | Out-Null }
-    Set-Content -Value $UnattendXML -Path ($MountedDrive + ":\Windows\Panther\Unattend.xml") -Force
-
-    New-Item -Path ($MountedDrive + ":\VHD") -ItemType Directory -Force | Out-Null
-    Copy-Item -Path "$($SCVMMConfig.Paths.VHDDir)" -Destination ($MountedDrive + ":\VHD") -Recurse -Force            
-    # Copy-Item -Path "$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx" -Destination ($MountedDrive + ":\VHD") -Recurse -Force
-
-    # Dismount VHDX
-    Write-Host "Dismounting VHDX File at path $path"
-    Dismount-VHD $path  
 }
 
 function Set-DataDrives {
@@ -707,7 +623,7 @@ function Set-FabricNetwork {
         $internetIndex = (Get-NetAdapter | Where-Object { $_.Name -eq "Internet" }).ifIndex
         Start-Sleep -Seconds 15
         New-NetIPAddress -IPAddress $internetIP -PrefixLength 24 -InterfaceIndex $internetIndex -DefaultGateway $internetGW -AddressFamily IPv4 | Out-Null
-        Set-DnsClientServerAddress -InterfaceIndex $internetIndex -ServerAddresses ($SCVMMConfig.natDNS) | Out-Null
+        Set-DnsClientServerAddress -InterfaceIndex $internetIndex -ServerAddresses ("8.8.8.8") | Out-Null
 
         # Enable Large MTU
         Write-Host "Configuring MTU on all Adapters"
@@ -872,7 +788,7 @@ function New-DCVM {
 
             # Set DNS Forwarder
             Write-Host "Adding DNS Forwarders"
-            Add-DnsServerForwarder $SCVMMConfig.natDNS
+            Add-DnsServerForwarder "8.8.8.8"
 
             # Create Enterprise CA 
             Write-Host "Installing and Configuring Active Directory Certificate Services and Certificate Templates"    
@@ -959,7 +875,7 @@ function New-RouterVM {
     Invoke-Command -VMName $SCVMMConfig.MgmtHostConfig.Hostname -Credential $localCred -ScriptBlock {
         $SCVMMConfig = $using:SCVMMConfig
         $localCred = $using:localcred
-        $ParentDiskPath = "C:\VMs\Base\AzSSCVMM.vhdx"
+        $ParentDiskPath = "C:\VMs\Base\AzSHCI.vhdx"
         $vmpath = "D:\VMs\"
         $VMName = $SCVMMConfig.BGPRouterName
     
@@ -1074,7 +990,7 @@ function New-RouterVM {
     
             # Adding a BGP Router to the VM
             # Write-Host "Creating BGP Router on $env:COMPUTERNAME"
-            # Add-BgpRouter -BGPIdentifier $PNVIP -LocalASN $SCVMMConfig.BGPRouterASN -TransitRouting 'Enabled' -Id 1 -RouteReflector 'Enabled'
+            # Add-BgpRouter -BGPIdentifier $PNVIP -LocalASN $SCVMMConfig.BGPRouterASN -TransitRouting 'Enabled' -environmentId 1 -RouteReflector 'Enabled'
 
             # Configure BGP Peers - commented during refactor for 23h2
             # if ($SCVMMConfig.ConfigureBGPpeering -and $SCVMMConfig.ProvisionNC) {
@@ -1106,282 +1022,53 @@ function New-RouterVM {
     }
 }
 
-function New-AdminCenterVM {
-    Param (
-        $SCVMMConfig,
-        $localCred,
-        $domainCred
-    )
-    $VMName = $SCVMMConfig.WACVMName
-    $UnattendXML = GenerateAnswerFile -HostName $VMName -IsWACVM $true -IPAddress $SCVMMConfig.WACIP -VMMac $SCVMMConfig.WACMAC -SCVMMConfig $SCVMMConfig
-    Invoke-Command -VMName AzSMGMT -Credential $localCred -ScriptBlock {
-        $VMName = $using:VMName
-        $ParentDiskPath = "C:\VMs\Base\"
-        $VHDPath = "D:\VMs\"
-        $OSVHDX = "GUI.vhdx"
-        $BaseVHDPath = $ParentDiskPath + $OSVHDX
-        $SCVMMConfig = $using:SCVMMConfig
-        $localCred = $using:localCred
-        $domainCred = $using:domainCred
-
-        # Create Host OS Disk
-        Write-Host "Creating $VMName differencing disks"
-        New-VHD -ParentPath $BaseVHDPath -Path (($VHDPath) + ($VMName) + '\' + $VMName + (".vhdx")) -Differencing | Out-Null
-
-        # Mount VHDX
-        Import-Module DISM
-        Write-Host "Mounting $VMName VHD"
-        New-Item -Path "C:\TempWACMount" -ItemType Directory | Out-Null
-        Mount-WindowsImage -Path "C:\TempWACMount" -Index 1 -ImagePath (($VHDPath) + ($VMName) + '\' + $VMName + (".vhdx")) | Out-Null
-
-        # Copy Source Files
-        Write-Host "Copying Application and Script Source Files to $VMName"
-        Copy-Item 'C:\Windows Admin Center' -Destination C:\TempWACMount\ -Recurse -Force
-        New-Item -Path C:\TempWACMount\VHDs -ItemType Directory -Force | Out-Null
-        Copy-Item C:\VMs\Base\AzSSCVMM.vhdx -Destination C:\TempWACMount\VHDs -Force # I dont think this is needed
-        Copy-Item C:\VMs\Base\GUI.vhdx  -Destination  C:\TempWACMount\VHDs -Force # I dont think this is needed
-
-        # Create VM
-        Write-Host "Provisioning the VM $VMName"
-        New-VM -Name $VMName -VHDPath (($VHDPath) + ($VMName) + '\' + $VMName + (".vhdx")) -Path $VHDPath -Generation 2 | Out-Null
-        Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $true -StartupBytes $SCVMMConfig.MEM_WAC -MaximumBytes $SCVMMConfig.MEM_WAC -MinimumBytes 500MB | Out-Null
-        Set-VM -Name $VMName -AutomaticStartAction Start -AutomaticStopAction ShutDown | Out-Null
-        Write-Host "Configuring $VMName networking"
-        Remove-VMNetworkAdapter -VMName $VMName -Name "Network Adapter"
-        Add-VMNetworkAdapter -VMName $VMName -Name "Fabric" -SwitchName $SCVMMConfig.FabricSwitch -DeviceNaming On
-        Set-VMNetworkAdapter -VMName $VMName -StaticMacAddress $SCVMMConfig.WACMAC # Mac address is linked to the answer file required in next step
-
-        # Apply custom Unattend.xml file
-        New-Item -Path C:\TempWACMount\windows -ItemType Directory -Name Panther -Force | Out-Null    
-        
-        Write-Host "Mounting and Injecting Answer File into the $VMName VM." 
-        Set-Content -Value $using:UnattendXML -Path "C:\TempWACMount\Windows\Panther\Unattend.xml" -Force
-        Write-Host "Dismounting Disk"
-        Dismount-WindowsImage -Path "C:\TempWACMount" -Save | Out-Null
-        Remove-Item "C:\TempWACMount"
-
-        Write-Host "Setting $VMName's VM Configuration"
-        Set-VMProcessor -VMName $VMname -Count 4
-        Set-VM -Name $VMName -AutomaticStopAction TurnOff
-
-        Write-Host "Starting $VMName VM."
-        Start-VM -Name $VMName
-
-        # Wait until the VM is restarted
-        while ((Invoke-Command -VMName $VMName -Credential $domainCred { "Test" } -ea SilentlyContinue) -ne "Test") { Start-Sleep -Seconds 5 }
-
-        # Configure WAC
-        Invoke-Command -VMName $VMName -Credential $domainCred -ArgumentList $SCVMMConfig, $VMName, $domainCred -ScriptBlock {
-            $SCVMMConfig = $args[0]
-            $VMName = $args[1]
-            $domainCred = $args[2]
-            Import-Module NetAdapter
-
-            Write-Host "Enabling Remote Access on $VMName"
-            Enable-WindowsOptionalFeature -FeatureName RasRoutingProtocols -All -LimitAccess -Online | Out-Null
-            Enable-WindowsOptionalFeature -FeatureName RemoteAccessPowerShell -All -LimitAccess -Online | Out-Null
-
-            Write-Host "Rename Network Adapter in $VMName" 
-            Get-NetAdapter | Rename-NetAdapter -NewName Fabric
-            Write-Host "Configuring MTU on all Adapters"
-            Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Set-NetAdapterAdvancedProperty -RegistryValue $SCVMMConfig.SDNLABMTU -RegistryKeyword "*JumboPacket"   
-
-            # Set Gateway
-            $index = (Get-WmiObject Win32_NetworkAdapter | Where-Object { $_.netconnectionid -eq "Fabric" }).InterfaceIndex
-            $NetInterface = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.InterfaceIndex -eq $index }     
-            $NetInterface.SetGateways($SCVMMConfig.SDNLABRoute) | Out-Null
-
-            # Enable CredSSP
-            Write-Host "Configuring WSMAN Trusted Hosts on $VMName"
-            Set-Item WSMan:\localhost\Client\TrustedHosts * -Confirm:$false -Force | Out-Null
-            Enable-WSManCredSSP -Role Client -DelegateComputer * -Force | Out-Null
-            Enable-PSRemoting -force | Out-Null
-            Enable-WSManCredSSP -Role Server -Force | Out-Null
-            Enable-WSManCredSSP -Role Client -DelegateComputer localhost -Force | Out-Null
-            Enable-WSManCredSSP -Role Client -DelegateComputer $env:COMPUTERNAME -Force | Out-Null
-            Enable-WSManCredSSP -Role Client -DelegateComputer $SCVMMConfig.SDNDomainFQDN -Force | Out-Null
-            Enable-WSManCredSSP -Role Client -DelegateComputer "*.$($SCVMMConfig.SDNDomainFQDN)" -Force | Out-Null
-            New-Item -Path HKLM:\SOFTWARE\Policies\Microsoft\Windows\CredentialsDelegation -Name AllowFreshCredentialsWhenNTLMOnly -Force | Out-Null
-            New-ItemProperty -Path HKLM:\SOFTWARE\Policies\Microsoft\Windows\CredentialsDelegation\AllowFreshCredentialsWhenNTLMOnly -Name 1 -Value * -PropertyType String -Force | Out-Null
-
-            $WACIP = $SCVMMConfig.WACIP.Split("/")[0]
-
-            # Install RSAT-NetworkController
-            $isAvailable = Get-WindowsFeature | Where-Object { $_.Name -eq 'RSAT-NetworkController' }
-            if ($isAvailable) {
-                Write-Host "Installing RSAT-NetworkController on $VMName"
-                Import-Module ServerManager
-                Install-WindowsFeature -Name RSAT-NetworkController -IncludeAllSubFeature -IncludeManagementTools | Out-Null
-            }
-            
-            # Install Windows features
-            Write-Host "Installing Hyper-V RSAT Tools on $VMName"
-            Install-WindowsFeature -Name RSAT-Hyper-V-Tools -IncludeAllSubFeature -IncludeManagementTools | Out-Null
-            Write-Host "Installing Active Directory RSAT Tools on $VMName"
-            Install-WindowsFeature -Name  RSAT-ADDS -IncludeAllSubFeature -IncludeManagementTools | Out-Null
-            Write-Host "Installing Failover ing RSAT Tools on $VMName"
-            Install-WindowsFeature -Name  RSAT-ing-Mgmt, RSAT-ing-PowerShell -IncludeAllSubFeature -IncludeManagementTools | Out-Null
-            Write-Host "Installing DNS Server RSAT Tools on $VMName"
-            Install-WindowsFeature -Name RSAT-DNS-Server -IncludeAllSubFeature -IncludeManagementTools | Out-Null
-            Install-RemoteAccess -VPNType RoutingOnly | Out-Null
-
-            # Stop Server Manager from starting on boot
-            Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\ServerManager" -Name "DoNotOpenServerManagerAtLogon" -Value 1
-            
-            # Create BGP Router
-            Add-BgpRouter -BGPIdentifier $WACIP -LocalASN $SCVMMConfig.WACASN -TransitRouting 'Enabled' -Id 1 -RouteReflector 'Enabled'
-
-            $RequestInf = @"
-[Version] 
-Signature="`$Windows NT$"
-
-[NewRequest] 
-Subject = "CN=$($SCVMMConfig.WACVMName).$($SCVMMConfig.SDNDomainFQDN)"
-Exportable = True
-KeyLength = 2048                    
-KeySpec = 1                     
-KeyUsage = 0xA0               
-MachineKeySet = True 
-ProviderName = "Microsoft RSA SChannel Cryptographic Provider" 
-ProviderType = 12 
-SMIME = FALSE 
-RequestType = CMC
-FriendlyName = "SCVMM Windows Admin Cert"
-
-[Strings] 
-szOID_SUBJECT_ALT_NAME2 = "2.5.29.17" 
-szOID_ENHANCED_KEY_USAGE = "2.5.29.37" 
-szOID_PKIX_KP_SERVER_AUTH = "1.3.6.1.5.5.7.3.1" 
-szOID_PKIX_KP_CLIENT_AUTH = "1.3.6.1.5.5.7.3.2"
-[Extensions] 
-%szOID_SUBJECT_ALT_NAME2% = "{text}dns=$($SCVMMConfig.WACVMName).$($SCVMMConfig.SDNDomainFQDN)" 
-%szOID_ENHANCED_KEY_USAGE% = "{text}%szOID_PKIX_KP_SERVER_AUTH%,%szOID_PKIX_KP_CLIENT_AUTH%"
-[RequestAttributes] 
-CertificateTemplate= WebServer
-"@
-
-            New-Item C:\WACCert -ItemType Directory -Force | Out-Null
-            Set-Content -Value $RequestInf -Path C:\WACCert\WACCert.inf -Force | Out-Null
-
-            Register-PSSessionConfiguration -Name 'Microsoft.SDNNested' -RunAsCredential $domainCred -MaximumReceivedDataSizePerCommandMB 1000 -MaximumReceivedObjectSizeMB 1000
-            Write-Host "Requesting and installing SSL Certificate on $using:VMName" 
-            Invoke-Command -ComputerName $VMName -ConfigurationName 'Microsoft.SDNNested' -Credential $domainCred -ArgumentList $SCVMMConfig -ScriptBlock {
-                $SCVMMConfig = $args[0]
-                # Get the CA Name
-                $CertDump = certutil -dump
-                $ca = ((((($CertDump.Replace('`', "")).Replace("'", "")).Replace(":", "=")).Replace('\', "")).Replace('"', "") | ConvertFrom-StringData).Name
-                $CertAuth = $SCVMMConfig.SDNDomainFQDN + '\' + $ca
-
-                Write-Host "CA is: $ca"
-                Write-Host "Certificate Authority is: $CertAuth"
-                Write-Host "Certdump is $CertDump"
-
-                # Request and Accept SSL Certificate
-                Set-Location C:\WACCert
-                certreq -q -f -new WACCert.inf WACCert.req
-                certreq -q -config $CertAuth -attrib "CertificateTemplate:webserver" -submit WACCert.req  WACCert.cer 
-                certreq -q -accept WACCert.cer
-                certutil -q -store my
-
-                Set-Location 'C:\'
-                Remove-Item C:\WACCert -Recurse -Force
-
-            } -Authentication Credssp
-
-            # Install Windows Admin Center
-            $pfxThumbPrint = (Get-ChildItem -Path Cert:\LocalMachine\my | Where-Object { $_.FriendlyName -match "SCVMM Windows Admin Cert" }).Thumbprint
-            Write-Host "Thumbprint: $pfxThumbPrint"
-            Write-Host "WACPort: $($SCVMMConfig.WACport)"
-            $WindowsAdminCenterGateway = "https://$($SCVMMConfig.WACVMName)." + $SCVMMConfig.SDNDomainFQDN
-            Write-Host $WindowsAdminCenterGateway
-            Write-Host "Installing and Configuring Windows Admin Center"
-            $PathResolve = Resolve-Path -Path 'C:\Windows Admin Center\*.msi'
-            $arguments = "/qn /L*v C:\log.txt SME_PORT=$($SCVMMConfig.WACport) SME_THUMBPRINT=$pfxThumbPrint SSL_CERTIFICATE_OPTION=installed SME_URL=$WindowsAdminCenterGateway"
-            Start-Process -FilePath $PathResolve -ArgumentList $arguments -PassThru | Wait-Process
-
-            # Install Chocolatey
-            Write-Host "Installing Chocolatey"
-            Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            Start-Sleep -Seconds 10
-
-            # Install Azure PowerShell
-            Write-Host 'Installing Az PowerShell'
-            $expression = "choco install az.powershell -y --limit-output"
-            Invoke-Expression $expression
-    
-            # Create Shortcut for Hyper-V Manager
-            Write-Host "Creating Shortcut for Hyper-V Manager"
-            Copy-Item -Path "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Administrative Tools\Hyper-V Manager.lnk" -Destination "C:\Users\Public\Desktop"
-
-            # Create Shortcut for Failover- Manager
-            Write-Host "Creating Shortcut for Failover- Manager"
-            Copy-Item -Path "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Administrative Tools\Failover  Manager.lnk" -Destination "C:\Users\Public\Desktop"
-
-            # Create Shortcut for DNS
-            Write-Host "Creating Shortcut for DNS Manager"
-            Copy-Item -Path "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Administrative Tools\DNS.lnk" -Destination "C:\Users\Public\Desktop"
-
-            # Create Shortcut for Active Directory Users and Computers
-            Write-Host "Creating Shortcut for AD Users and Computers"
-            Copy-Item -Path "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Administrative Tools\Active Directory Users and Computers.lnk" -Destination "C:\Users\Public\Desktop"
-    
-            # Set Network Profiles
-            Get-NetConnectionProfile | Where-Object { $_.NetworkCategory -eq "Public" } | Set-NetConnectionProfile -NetworkCategory Private | Out-Null    
-    
-            # Disable Automatic Updates
-            $WUKey = "HKLM:\software\Policies\Microsoft\Windows\WindowsUpdate"
-            New-Item -Path $WUKey -Force | Out-Null
-            New-ItemProperty -Path $WUKey -Name AUOptions -PropertyType Dword -Value 2 -Force | Out-Null  
-
-            # Install Kubectl
-            Write-Host 'Installing kubectl'
-            $expression = "choco install kubernetes-cli -y --limit-output"
-            Invoke-Expression $expression
-
-            # Create a shortcut for Windows Admin Center
-            Write-Host "Creating Shortcut for Windows Admin Center"
-            if ($SCVMMConfig.WACport -ne "443") { $TargetPath = "https://$($SCVMMConfig.WACVMName)." + $SCVMMConfig.SDNDomainFQDN + ":" + $SCVMMConfig.WACport }
-            else { $TargetPath = "https://$($SCVMMConfig.WACVMName)." + $SCVMMConfig.SDNDomainFQDN }
-            $ShortcutFile = "C:\Users\Public\Desktop\Windows Admin Center.url"
-            $WScriptShell = New-Object -ComObject WScript.Shell
-            $Shortcut = $WScriptShell.CreateShortcut($ShortcutFile)
-            $Shortcut.TargetPath = $TargetPath
-            $Shortcut.Save()
-
-            # Disable Edge 'First Run' Setup
-            $edgePolicyRegistryPath  = 'HKLM:SOFTWARE\Policies\Microsoft\Edge'
-            $desktopSettingsRegistryPath = 'HKCU:SOFTWARE\Microsoft\Windows\Shell\Bags\1\Desktop'
-            $firstRunRegistryName  = 'HideFirstRunExperience'
-            $firstRunRegistryValue = '0x00000001'
-            $savePasswordRegistryName = 'PasswordManagerEnabled'
-            $savePasswordRegistryValue = '0x00000000'
-            $autoArrangeRegistryName = 'FFlags'
-            $autoArrangeRegistryValue = '1075839525'
-
-            if (-NOT (Test-Path -Path $edgePolicyRegistryPath)) {
-                New-Item -Path $edgePolicyRegistryPath -Force | Out-Null
-            }
-            if (-NOT (Test-Path -Path $desktopSettingsRegistryPath)) {
-                New-Item -Path $desktopSettingsRegistryPath -Force | Out-Null
-            }
-
-            New-ItemProperty -Path $edgePolicyRegistryPath -Name $firstRunRegistryName -Value $firstRunRegistryValue -PropertyType DWORD -Force
-            New-ItemProperty -Path $edgePolicyRegistryPath -Name $savePasswordRegistryName -Value $savePasswordRegistryValue -PropertyType DWORD -Force
-            Set-ItemProperty -Path $desktopSettingsRegistryPath -Name $autoArrangeRegistryName -Value $autoArrangeRegistryValue -Force            
-        }
-    }
-}
-
 function Test-InternetConnect {
-    $testIP = $SCVMMConfig.natDNS
+    $testIP = "8.8.8.8"
     $ErrorActionPreference = "Stop"  
     $intConnect = Test-NetConnection -ComputerName $testip -Port 53
 
     if (!$intConnect.TcpTestSucceeded) {
-        throw "Unable to connect to DNS by pinging $($SCVMMConfig.natDNS) - Network access to this IP is required."
+        throw "Unable to connect to DNS by pinging 8.8.8.8 - Network access to this IP is required."
     }
 }
 
+function New-HyperVVM {
+    param (
+        $Name,
+        $VHDXPath,
+        $VMSwitch,
+        $HCIBoxConfig
+    )
+    Write-Host "Creating VM $Name"
+    # Create disks
+    $VHDX1 = New-VHD -ParentPath $VHDXPath -Path "$($HCIBoxConfig.HostVMPath)\$Name.vhdx" -Differencing 
+    $VHDX2 = New-VHD -Path "$($HCIBoxConfig.HostVMPath)\$Name-Data.vhdx" -SizeBytes 268435456000 -Dynamic -Differencing
+
+    # Create Nested VM
+    New-VM -Name $Name -MemoryStartupBytes $HCIBoxConfig.NestedVMMemoryinGB -VHDPath $VHDX1.Path -SwitchName $VMSwitch -Generation 2 | Out-Null
+    Add-VMHardDiskDrive -VMName $Name -Path $VHDX2.Path
+
+    Set-VM -Name $Name -ProcessorCount 20 -AutomaticStartAction Start
+    Get-VMNetworkAdapter -VMName $Name | Rename-VMNetworkAdapter -NewName "SDN"
+    Get-VMNetworkAdapter -VMName $Name | Set-VMNetworkAdapter -DeviceNaming On -StaticMacAddress  ("{0:D12}" -f ( Get-Random -Minimum 0 -Maximum 99999 ))
+    # Add-VMNetworkAdapter -VMName $Name -Name SDN2 -DeviceNaming On -SwitchName $VMSwitch
+    $vmMac = ((Get-VMNetworkAdapter -Name SDN -VMName $Name).MacAddress) -replace '..(?!$)', '$&-'
+
+    Add-VMNetworkAdapter -VMName $Name -SwitchName $VMSwitch -DeviceNaming On -Name StorageA
+    Add-VMNetworkAdapter -VMName $Name -SwitchName $VMSwitch -DeviceNaming On -Name StorageB
+
+    Get-VM $Name | Set-VMProcessor -ExposeVirtualizationExtensions $true
+    Get-VM $Name | Set-VMMemory -DynamicMemoryEnabled $false
+    Get-VM $Name | Get-VMNetworkAdapter | Set-VMNetworkAdapter -MacAddressSpoofing On
+
+    Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName SDN -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-200
+    # Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName SDN2 -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-200  
+    Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName StorageA -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-800
+    Set-VMNetworkAdapterVlan -VMName $Name -VMNetworkAdapterName StorageB -Trunk -NativeVlanId 0 -AllowedVlanIdList 1-800 
+
+    Enable-VMIntegrationService -VMName $Name -Name "Guest Service Interface"
+    return $vmMac
+}
 function Set-HostNAT {
     param (
         $SCVMMConfig
@@ -1405,87 +1092,14 @@ function Set-HostNAT {
     }
 }
 
-function Set-SCVMMDeployPrereqs {
-    param (
-        $SCVMMConfig,
-        [PSCredential]$localCred,
-        [PSCredential]$domainCred
-    )
-    Invoke-Command -VMName $SCVMMConfig.MgmtHostConfig.Hostname -Credential $localCred -ScriptBlock {
-        $SCVMMConfig = $using:SCVMMConfig
-        $localCred = $using:localcred
-        $domainCred = $using:domainCred
-        Invoke-Command -VMName $SCVMMConfig.DCName -Credential $domainCred -ArgumentList $SCVMMConfig -ScriptBlock {
-            $SCVMMConfig = $args[0]
-            $domainCredNoDomain = new-object -typename System.Management.Automation.PSCredential `
-                -argumentlist ($SCVMMConfig.LCMDeployUsername), (ConvertTo-SecureString $SCVMMConfig.SDNAdminPassword -AsPlainText -Force)
-            
-            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
-            Install-Module AsSCVMMADArtifactsPreCreationTool -Repository PSGallery -Force -Confirm:$false
-            $domainName = $SCVMMConfig.SDNDomainFQDN.Split('.')
-            $ouName = "OU=$($SCVMMConfig.LCMADOUName)"
-            foreach ($name in $domainName) {
-                $ouName += ",DC=$name"
-            }
-            $nodes = @()
-            foreach ($node in $SCVMMConfig.NodeHostConfig) {
-                $nodes += $node.Hostname.ToString()
-            }
-            Add-KdsRootKey -EffectiveTime ((Get-Date).AddHours(-10))
-            $deploymentPrefix = $SCVMMConfig.LCMDeploymentPrefix
-            New-SCVMMAdObjectsPreCreation -Deploy -AzureStackLCMUserCredential $domainCredNoDomain -AsSCVMMOUName $ouName -AsSCVMMPhysicalNodeList $nodes -DomainFQDN $SCVMMConfig.SDNDomainFQDN -AsSCVMMName $SCVMMConfig.Name -AsSCVMMDeploymentPrefix $deploymentPrefix
-        }
-    }
-    
-    foreach ($node in $SCVMMConfig.NodeHostConfig) {
-        Invoke-Command -VMName $node.Hostname -Credential $localCred -ArgumentList $env:subscriptionId, $env:spnTenantId, $env:spnClientID, $env:spnClientSecret, $env:resourceGroup -ScriptBlock {
-            $subId = $args[0]
-            $tenantId = $args[1]
-            $clientId = $args[2]
-            $clientSecret = $args[3]
-            $resourceGroup = $args[4]
-    
-            # Prep nodes for Azure Arc onboarding
-            winrm quickconfig -quiet
-            netsh advfirewall firewall add rule name="ICMP Allow incoming V4 echo request" protocol=icmpv4:8,any dir=in action=allow
-    
-            # Register PSGallery as a trusted repo
-            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
-            Register-PSRepository -Default -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-    
-            #Install Arc registration script from PSGallery 
-            Install-Module AzsSCVMM.ARCinstaller -Force
-    
-            #Install required PowerShell modules in your node for registration
-            Install-Module Az.Accounts -Force
-            Install-Module Az.ConnectedMachine -Force
-            Install-Module Az.Resources -Force
-            $azureAppCred = (New-Object System.Management.Automation.PSCredential $clientId, (ConvertTo-SecureString -String $clientSecret -AsPlainText -Force))
-            Connect-AzAccount -ServicePrincipal -SubscriptionId $subId -TenantId $tenantId -Credential $azureAppCred
-            $armtoken = Get-AzAccessToken
-
-            # Workaround for BITS transfer issue
-            Get-NetAdapter StorageA | Disable-NetAdapter -Confirm:$false | Out-Null
-            Get-NetAdapter StorageB | Disable-NetAdapter -Confirm:$false | Out-Null
-    
-            #Invoke the registration script. For this release, only eastus region is supported.
-            Invoke-AzStackSCVMMArcInitialization -SubscriptionID $subId -ResourceGroup $resourceGroup -TenantID $tenantId -Region eastus -Cloud "AzureCloud" -ArmAccessToken $armtoken.Token -AccountID $clientId
-            
-            Get-NetAdapter StorageA | Enable-NetAdapter -Confirm:$false | Out-Null
-            Get-NetAdapter StorageB | Enable-NetAdapter -Confirm:$false | Out-Null
-        }
-    }
-}
-
 #endregion
    
 #region Main
 $guiVHDXPath = $SCVMMConfig.guiVHDXPath
-$azSSCVMMVHDXPath = $SCVMMConfig.azSSCVMMVHDXPath
+$azSCVMMVHDXPath = $SCVMMConfig.azSCVMMVHDXPath
 $HostVMPath = $SCVMMConfig.HostVMPath
 $InternalSwitch = $SCVMMConfig.InternalSwitch
-$natDNS = $SCVMMConfig.natDNS
+$natDNS = "8.8.8.8"
 $natSubnet = $SCVMMConfig.natSubnet
 
 Import-Module Hyper-V
@@ -1502,20 +1116,8 @@ foreach ($path in $SCVMMConfig.Paths.GetEnumerator()) {
 }
 
 # Download SCVMM VHDs
-Write-Host "[Build  - Step 1/10] Downloading SCVMM VHDs" -ForegroundColor Green
-BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Pro'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.vhdx" }
-BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.sha256" }
-$checksum = Get-FileHash -Path "$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.vhdx"
-$hash = Get-Content -Path "$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.sha256"
-if ($checksum.Hash -eq $hash) {
-    Write-Host "AZSCHI.vhdx has valid checksum. Continuing..."
-}
-else {
-    Write-Error "AZSCHI.vhdx is corrupt. Aborting deployment. Re-run C:\SCVMM\SCVMMLogonScript.ps1 to retry"
-    throw 
-}
-BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Pro'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"}
-BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Pro'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.sha256" }
+BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"}
+BITSRequest -Params @{'Uri'='https://aka.ms/VHDHash-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.sha256" }
 $checksum = Get-FileHash -Path "$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"
 $hash = Get-Content -Path "$($SCVMMConfig.Paths.VHDDir)\GUI.sha256"
 if ($checksum.Hash -eq $hash) {
@@ -1525,9 +1127,6 @@ else {
     Write-Error "GUI.vhdx is corrupt. Aborting deployment. Re-run C:\SCVMM\SCVMMLogonScript.ps1 to retry"
     throw 
 }
-# BITSRequest -Params @{'Uri'='https://partner-images.canonical.com/hyper-v/desktop/focal/current/ubuntu-focal-hyperv-amd64-ubuntu-desktop-hyperv.vhdx.zip'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx.zip"}
-# Expand-Archive -Path "$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx.zip" -DestinationPath $($SCVMMConfig.Paths.VHDDir)
-# Move-Item -Path "$($SCVMMConfig.Paths.VHDDir)\livecd.ubuntu-desktop-hyperv.vhdx" -Destination "$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx"
 
 # Set credentials
 $localCred = new-object -typename System.Management.Automation.PSCredential `
@@ -1537,7 +1136,7 @@ $domainCred = new-object -typename System.Management.Automation.PSCredential `
     -argumentlist (($SCVMMConfig.SDNDomainFQDN.Split(".")[0]) +"\Administrator"), (ConvertTo-SecureString $SCVMMConfig.SDNAdminPassword -AsPlainText -Force)
 
 # Enable PSRemoting
-Write-Host "[Build  - Step 2/10] Preparing Azure VM virtualization host..." -ForegroundColor Green
+Write-Host "[Build environment - Step 2/10] Preparing Azure VM virtualization host..." -ForegroundColor Green
 Write-Host "Enabling PS Remoting on client..."
 Enable-PSRemoting
 set-item WSMan:localhost\client\trustedhosts -value * -Force
@@ -1560,27 +1159,27 @@ Set-VMHost -VirtualHardDiskPath $HostVMPath -VirtualMachinePath $HostVMPath -Ena
 
 Write-Host "Copying VHDX Files to Host virtualization drive"
 $guipath = "$HostVMPath\GUI.vhdx"
-$SCVMMpath = "$HostVMPath\AzSSCVMM.vhdx"
+
+Start-Sleep 30
 Copy-Item -Path $SCVMMConfig.guiVHDXPath -Destination $guipath -Force | Out-Null
-Copy-Item -Path $SCVMMConfig.azSSCVMMVHDXPath -Destination $SCVMMpath -Force | Out-Null
+$guipath = "$HostVMPath\GUI2.vhdx"
+Copy-Item -Path $SCVMMConfig.guiVHDXPath -Destination $guipath -Force | Out-Null
 
 ################################################################################
-# Create the three nested Virtual Machines 
+# Create the two nested Virtual Machines 
 ################################################################################
 # First create the Management VM (AzSMGMT)
-Write-Host "[Build  - Step 3/10] Creating Management VM (AzSMGMT)..." -ForegroundColor Green
+Write-Host "[Build environment - Step 3/10] Creating Management VM (AzSMGMT)..." -ForegroundColor Green
 $mgmtMac = New-ManagementVM -Name $($SCVMMConfig.MgmtHostConfig.Hostname) -VHDXPath "$HostVMPath\GUI.vhdx" -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
 Set-MGMTVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
 
-# Create the SCVMM host node VMs
-Write-Host "[Build  - Step 4/10] Creating SCVMM node VMs (AzSHOSTx)..." -ForegroundColor Green
-foreach ($VM in $SCVMMConfig.NodeHostConfig) {
-    $mac = New-SCVMMNodeVM -Name $VM.Hostname -VHDXPath $SCVMMpath -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
-    Set-SCVMMNodeVHDX -HostName $VM.Hostname -IPAddress $VM.IP -VMMac $mac  -SCVMMConfig $SCVMMConfig
-}
+# Create the Hyperv VM (HypervVM)
+Write-Host "[Build environment - Step 3/10] Creating HyperV VM (HyperV)..." -ForegroundColor Green
+$mgmtMac = New-HyperVVM -Name $($SCVMMConfig.NodeHostConfig.Hostname) -VHDXPath "$HostVMPath\GUI2.vhdx" -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
+Set-MGMTVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
     
 # Start Virtual Machines
-Write-Host "[Build  - Step 5/10] Starting VMs..." -ForegroundColor Green
+Write-Host "[Build environment - Step 5/10] Starting VMs..." -ForegroundColor Green
 Write-Host "Starting VM: $($SCVMMConfig.MgmtHostConfig.Hostname)"
 Start-VM -Name $SCVMMConfig.MgmtHostConfig.Hostname
 foreach ($VM in $SCVMMConfig.NodeHostConfig) {
@@ -1591,7 +1190,7 @@ foreach ($VM in $SCVMMConfig.NodeHostConfig) {
 #######################################################################################
 # Prep the virtualization environment
 #######################################################################################
-Write-Host "[Build  - Step 6/10] Configuring host networking and storage..." -ForegroundColor Green
+Write-Host "[Build environment - Step 6/10] Configuring host networking and storage..." -ForegroundColor Green
 # Wait for AzSHOSTs to come online
 Test-AllVMsAvailable -SCVMMConfig $SCVMMConfig -Credential $localCred
 Start-Sleep -Seconds 60
@@ -1615,29 +1214,22 @@ New-NATSwitch -SCVMMConfig $SCVMMConfig
 Set-FabricNetwork -SCVMMConfig $SCVMMConfig -localCred $localCred
 
 #######################################################################################
-# Provision the router, domain controller, and WAC VMs and join the hosts to the domain
+# Provision the router, domain controller VMs and join the hosts to the domain
 #######################################################################################
 # Provision Router VM on AzSMGMT
-Write-Host "[Build  - Step 7/10] Build router VM..." -ForegroundColor Green
+Write-Host "[Build environment - Step 7/10] Build router VM..." -ForegroundColor Green
 New-RouterVM -SCVMMConfig $SCVMMConfig -localCred $localCred
 
 # Provision Domain controller VM on AzSMGMT
-Write-Host "[Build  - Step 8/10] Building Domain Controller VM..." -ForegroundColor Green
+Write-Host "[Build environment - Step 8/10] Building Domain Controller VM..." -ForegroundColor Green
 New-DCVM -SCVMMConfig $SCVMMConfig -localCred $localCred -domainCred $domainCred
 
-# Provision Admincenter VM
-# Write-Host "[Build  - Step 9/12] Building Windows Admin Center gateway server VM... (skipping step)" -ForegroundColor Green
-#New-AdminCenterVM -SCVMMConfig $SCVMMConfig -localCred $localCred -domainCred $domainCred
-
 #######################################################################################
-# Prepare the  for deployment
+# Prepare the environment for deployment
 #######################################################################################
-# New-S2D -SCVMMConfig $SCVMMConfig -domainCred $domainCred
-Write-Host "[Build  - Step 9/10] Preparing SCVMM  Azure deployment..." -ForegroundColor Green
-Set-SCVMMDeployPrereqs -SCVMMConfig $SCVMMConfig -localCred $localCred -domainCred $domainCred
 
-#  complete. Finish up and add RDP Link to Desktop to WAC machine.
-Write-Host "[Build  - Step 10/10] Tidying up..." -ForegroundColor Green
+# environment complete. 
+Write-Host "[Build environment - Step 10/10] Tidying up..." -ForegroundColor Green
 
 $endtime = Get-Date
 $timeSpan = New-TimeSpan -Start $starttime -End $endtime

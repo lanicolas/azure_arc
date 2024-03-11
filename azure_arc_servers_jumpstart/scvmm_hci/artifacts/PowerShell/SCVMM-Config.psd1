@@ -77,7 +77,7 @@
     ClusterVSwitchName                   = "SCVMMSwitch"
     SCVMMVMName                          = "SCVMMCenter"
     LCMDeployUsername                    = "SCVMMDeployUser"
-    LCMADOUName                          = "hcioudocs"
+    LCMADOUName                          = "scvmmoudocs"
     LCMDeploymentPrefix                  = "SCVMM"
 
     # ProductKeys
