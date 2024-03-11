@@ -1503,7 +1503,7 @@ foreach ($path in $SCVMMConfig.Paths.GetEnumerator()) {
 
 # Download SCVMM VHDs
 Write-Host "[Build  - Step 1/10] Downloading SCVMM VHDs" -ForegroundColor Green
-BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Pro'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.vhdx" }
+BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.vhdx" }
 BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.sha256" }
 $checksum = Get-FileHash -Path "$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.vhdx"
 $hash = Get-Content -Path "$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.sha256"
@@ -1514,8 +1514,8 @@ else {
     Write-Error "AZSCHI.vhdx is corrupt. Aborting deployment. Re-run C:\SCVMM\SCVMMLogonScript.ps1 to retry"
     throw 
 }
-BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Pro'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"}
-BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Pro'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.sha256" }
+BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"}
+BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.sha256" }
 $checksum = Get-FileHash -Path "$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"
 $hash = Get-Content -Path "$($SCVMMConfig.Paths.VHDDir)\GUI.sha256"
 if ($checksum.Hash -eq $hash) {
