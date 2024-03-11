@@ -1504,7 +1504,7 @@ foreach ($path in $SCVMMConfig.Paths.GetEnumerator()) {
 # Download SCVMM VHDs
 Write-Host "[Build  - Step 1/10] Downloading SCVMM VHDs" -ForegroundColor Green
 BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.vhdx" }
-BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.sha256" }
+BITSRequest -Params @{'Uri'='https://aka.ms/VHDHash-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.sha256" }
 $checksum = Get-FileHash -Path "$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.vhdx"
 $hash = Get-Content -Path "$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.sha256"
 if ($checksum.Hash -eq $hash) {
@@ -1515,7 +1515,7 @@ else {
     throw 
 }
 BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"}
-BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.sha256" }
+BITSRequest -Params @{'Uri'='https://aka.ms/VHDHash-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.sha256" }
 $checksum = Get-FileHash -Path "$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"
 $hash = Get-Content -Path "$($SCVMMConfig.Paths.VHDDir)\GUI.sha256"
 if ($checksum.Hash -eq $hash) {
@@ -1562,7 +1562,7 @@ Write-Host "Copying VHDX Files to Host virtualization drive"
 $guipath = "$HostVMPath\GUI.vhdx"
 $SCVMMpath = "$HostVMPath\AzSSCVMM.vhdx"
 Copy-Item -Path $SCVMMConfig.guiVHDXPath -Destination $guipath -Force | Out-Null
-Copy-Item -Path $SCVMMConfig.azSSCVMMVHDXPath -Destination $SCVMMpath -Force | Out-Null
+Copy-Item -Path $SCVMMConfig.azshypervVHDXPath -Destination $SCVMMpath -Force | Out-Null
 
 ################################################################################
 # Create the three nested Virtual Machines 
@@ -1572,8 +1572,8 @@ Write-Host "[Build  - Step 3/10] Creating Management VM (AzSMGMT)..." -Foregroun
 $mgmtMac = New-ManagementVM -Name $($SCVMMConfig.MgmtHostConfig.Hostname) -VHDXPath "$HostVMPath\GUI.vhdx" -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
 Set-MGMTVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
 
-# Create the SCVMM host node VMs
-Write-Host "[Build  - Step 4/10] Creating SCVMM node VMs (AzSHOSTx)..." -ForegroundColor Green
+# Create the SCVMM node VM
+Write-Host "[Build  - Step 4/10] Creating SCVMM VMs (AzSHOSTx)..." -ForegroundColor Green
 foreach ($VM in $SCVMMConfig.NodeHostConfig) {
     $mac = New-SCVMMNodeVM -Name $VM.Hostname -VHDXPath $SCVMMpath -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
     Set-SCVMMNodeVHDX -HostName $VM.Hostname -IPAddress $VM.IP -VMMac $mac  -SCVMMConfig $SCVMMConfig
