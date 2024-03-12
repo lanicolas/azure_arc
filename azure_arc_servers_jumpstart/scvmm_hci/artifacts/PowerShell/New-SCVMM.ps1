@@ -431,7 +431,7 @@ function Set-MGMTVHDX {
     Write-Host "Injecting files into $path"
     Copy-Item -Path "$Env:SCVMMDir\SCVMM-Config.psd1" -Destination ($MountedDrive + ":\") -Recurse -Force
     Copy-Item -Path $guiVHDXPath -Destination ($MountedDrive + ":\VMs\Base\GUI.vhdx") -Force
-    Copy-Item -Path $azSSCVMMVHDXPath -Destination ($MountedDrive + ":\VMs\Base\AzSSCVMM.vhdx") -Force
+    Copy-Item -Path $SCVMMpath -Destination ($MountedDrive + ":\VMs\Base\AzSSCVMM.vhdx") -Force
     New-Item -Path ($MountedDrive + ":\") -Name "Windows Admin Center" -ItemType Directory -Force | Out-Null
     Copy-Item -Path "$($SCVMMConfig.Paths["WACDir"])\*.msi" -Destination ($MountedDrive + ":\Windows Admin Center") -Recurse -Force  
 
@@ -1525,10 +1525,6 @@ else {
     Write-Error "GUI.vhdx is corrupt. Aborting deployment. Re-run C:\SCVMM\SCVMMLogonScript.ps1 to retry"
     throw 
 }
-# BITSRequest -Params @{'Uri'='https://partner-images.canonical.com/hyper-v/desktop/focal/current/ubuntu-focal-hyperv-amd64-ubuntu-desktop-hyperv.vhdx.zip'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx.zip"}
-# Expand-Archive -Path "$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx.zip" -DestinationPath $($SCVMMConfig.Paths.VHDDir)
-# Move-Item -Path "$($SCVMMConfig.Paths.VHDDir)\livecd.ubuntu-desktop-hyperv.vhdx" -Destination "$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx"
-
 # Set credentials
 $localCred = new-object -typename System.Management.Automation.PSCredential `
     -argumentlist "Administrator", (ConvertTo-SecureString $SCVMMConfig.SDNAdminPassword -AsPlainText -Force)
@@ -1572,7 +1568,7 @@ Write-Host "[Build  - Step 3/10] Creating Management VM (AzSMGMT)..." -Foregroun
 $mgmtMac = New-ManagementVM -Name $($SCVMMConfig.MgmtHostConfig.Hostname) -VHDXPath "$HostVMPath\GUI.vhdx" -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
 Set-MGMTVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
 
-# Create the SCVMM node VM
+# Create the SCVMM VM
 Write-Host "[Build  - Step 4/10] Creating SCVMM VMs (AzSHOSTx)..." -ForegroundColor Green
 foreach ($VM in $SCVMMConfig.NodeHostConfig) {
     $mac = New-SCVMMNodeVM -Name $VM.Hostname -VHDXPath $SCVMMpath -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig

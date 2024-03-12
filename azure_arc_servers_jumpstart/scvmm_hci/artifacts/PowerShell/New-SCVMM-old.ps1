@@ -361,7 +361,7 @@ function Set-MGMTVHDX {
     Install-WindowsFeature -Vhd $path -Name Hyper-V, RSAT-Hyper-V-Tools, Hyper-V-Powershell -Confirm:$false | Out-Null
     Start-Sleep -Seconds 20
 
-    # Mount VHDX - bunch of kludgey logic in here to deal with different partition layouts on the GUI and HCI VHD images
+    # Mount VHDX - bunch of kludgey logic in here to deal with different partition layouts on the GUI VHD images
     Write-Host "Mounting VHDX file at $path"
     [string]$MountedDrive = ""
     $partition = Mount-VHD -Path $path -Passthru | Get-Disk | Get-Partition -PartitionNumber 3
@@ -400,6 +400,55 @@ function Set-MGMTVHDX {
     Dismount-VHD $path 
 }
 
+function Set-HypervVHDX {
+    param (
+        $VMMac,
+        $SCVMMConfig
+    )
+    $DriveLetter = $($SCVMMConfig.HostVMPath).Split(':')
+    $path = (("\\localhost\") + ($DriveLetter[0] + "$") + ($DriveLetter[1]) + "\" + $($SCVMMConfig.MgmtHostConfig.Hostname) + ".vhdx") 
+    Write-Host "Performing offline installation of Hyper-V on $($SCVMMConfig.MgmtHostConfig.Hostname)"
+    Install-WindowsFeature -Vhd $path -Name Hyper-V, RSAT-Hyper-V-Tools, Hyper-V-Powershell -Confirm:$false | Out-Null
+    Start-Sleep -Seconds 20
+
+    # Mount VHDX - bunch of kludgey logic in here to deal with different partition layouts on the GUI VHD images
+    Write-Host "Mounting VHDX file at $path"
+    [string]$MountedDrive = ""
+    $partition = Mount-VHD -Path $path -Passthru | Get-Disk | Get-Partition -PartitionNumber 3
+    if (!$partition.DriveLetter) {
+        $MountedDrive = "X"
+        $partition | Set-Partition -NewDriveLetter $MountedDrive
+    }  
+    else {
+        $MountedDrive = $partition.DriveLetter
+    }
+
+    # Inject Answer File
+    Write-Host "Injecting answer file to $path"
+    $UnattendXML = GenerateAnswerFile -HostName $($SCVMMConfig.MgmtHostConfig.Hostname) -IsMgmtVM $true -IPAddress $SCVMMConfig.MgmtHostConfig.IP -VMMac $VMMac -SCVMMConfig $SCVMMConfig
+    
+    Write-Host "Mounted Disk Volume is: $MountedDrive" 
+    $PantherDir = Get-ChildItem -Path ($MountedDrive + ":\Windows")  -Filter "Panther"
+    if (!$PantherDir) { New-Item -Path ($MountedDrive + ":\Windows\Panther") -ItemType Directory -Force | Out-Null }
+
+    Set-Content -Value $UnattendXML -Path ($MountedDrive + ":\Windows\Panther\Unattend.xml") -Force
+
+    # Creating folder structure on AzSMGMT
+    Write-Host "Creating VMs\Base folder structure on $($SCVMMConfig.MgmtHostConfig.Hostname)"
+    New-Item -Path ($MountedDrive + ":\VMs\Base") -ItemType Directory -Force | Out-Null
+
+    # Injecting configs into VMs
+    Write-Host "Injecting files into $path"
+    Copy-Item -Path "$Env:SCVMMDir\SCVMM-Config.psd1" -Destination ($MountedDrive + ":\") -Recurse -Force
+    Copy-Item -Path $guiVHDXPath -Destination ($MountedDrive + ":\VMs\Base\GUI.vhdx") -Force
+    Copy-Item -Path $azSCVMMVHDXPath -Destination ($MountedDrive + ":\VMs\Base\AzSHCI.vhdx") -Force
+    New-Item -Path ($MountedDrive + ":\") -Name "Windows Admin Center" -ItemType Directory -Force | Out-Null
+    Copy-Item -Path "$($SCVMMConfig.Paths["WACDir"])\*.msi" -Destination ($MountedDrive + ":\Windows Admin Center") -Recurse -Force  
+
+    # Dismount VHDX
+    Write-Host "Dismounting VHDX File at path $path"
+    Dismount-VHD $path 
+}
 function Set-DataDrives {
     param (
         $SCVMMConfig,
@@ -1037,15 +1086,15 @@ function New-HyperVVM {
         $Name,
         $VHDXPath,
         $VMSwitch,
-        $HCIBoxConfig
+        $SCVMMBoxConfig
     )
     Write-Host "Creating VM $Name"
     # Create disks
-    $VHDX1 = New-VHD -ParentPath $VHDXPath -Path "$($HCIBoxConfig.HostVMPath)\$Name.vhdx" -Differencing 
-    $VHDX2 = New-VHD -Path "$($HCIBoxConfig.HostVMPath)\$Name-Data.vhdx" -SizeBytes 268435456000 -Dynamic -Differencing
+    $VHDX1 = New-VHD -ParentPath $VHDXPath -Path "$($SCVMMBoxConfig.HostVMPath)\$Name.vhdx" -Differencing 
+    $VHDX2 = New-VHD -Path "$($SCVMMBoxConfig.HostVMPath)\$Name-Data.vhdx" -SizeBytes 268435456000 -Dynamic -Differencing
 
     # Create Nested VM
-    New-VM -Name $Name -MemoryStartupBytes $HCIBoxConfig.NestedVMMemoryinGB -VHDPath $VHDX1.Path -SwitchName $VMSwitch -Generation 2 | Out-Null
+    New-VM -Name $Name -MemoryStartupBytes $SCVMMBoxConfig.NestedVMMemoryinGB -VHDPath $VHDX1.Path -SwitchName $VMSwitch -Generation 2 | Out-Null
     Add-VMHardDiskDrive -VMName $Name -Path $VHDX2.Path
 
     Set-VM -Name $Name -ProcessorCount 20 -AutomaticStartAction Start
@@ -1176,7 +1225,7 @@ Set-MGMTVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
 # Create the Hyperv VM (HypervVM)
 Write-Host "[Build environment - Step 3/10] Creating HyperV VM (HyperV)..." -ForegroundColor Green
 $mgmtMac = New-HyperVVM -Name $($SCVMMConfig.NodeHostConfig.Hostname) -VHDXPath "$HostVMPath\GUI2.vhdx" -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
-Set-MGMTVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
+Set-HypervVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
     
 # Start Virtual Machines
 Write-Host "[Build environment - Step 5/10] Starting VMs..." -ForegroundColor Green

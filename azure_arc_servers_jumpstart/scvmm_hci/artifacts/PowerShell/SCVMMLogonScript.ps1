@@ -52,10 +52,10 @@ $diskNum = $disks.Count
 New-VirtualDisk -StoragePoolFriendlyName scvmmpool -FriendlyName scvmmDisk -ResiliencySettingName Simple -NumberOfColumns $diskNum -UseMaximumSize
 $vDisk = Get-VirtualDisk -FriendlyName scvmmDisk
 if ($vDisk | Get-Disk | Where-Object PartitionStyle -eq 'raw') {
-    $vDisk | Get-Disk | Initialize-Disk -Passthru | New-Partition -DriveLetter $SCVMMConfig.HostVMDriveLetter -UseMaximumSize | Format-Volume -NewFileSystemLabel AsHciData -AllocationUnitSize 64KB -FileSystem NTFS
+    $vDisk | Get-Disk | Initialize-Disk -Passthru | New-Partition -DriveLetter $SCVMMConfig.HostVMDriveLetter -UseMaximumSize | Format-Volume -NewFileSystemLabel SCVMMData -AllocationUnitSize 64KB -FileSystem NTFS
 }
 elseif ($vDisk | Get-Disk | Where-Object PartitionStyle -eq 'GPT') {
-    $vDisk | Get-Disk | New-Partition -DriveLetter $SCVMMConfig.HostVMDriveLetter -UseMaximumSize | Format-Volume -NewFileSystemLabel AsHciData -AllocationUnitSize 64KB -FileSystem NTFS
+    $vDisk | Get-Disk | New-Partition -DriveLetter $SCVMMConfig.HostVMDriveLetter -UseMaximumSize | Format-Volume -NewFileSystemLabel SCVMMData -AllocationUnitSize 64KB -FileSystem NTFS
 }
 
 Stop-Transcript

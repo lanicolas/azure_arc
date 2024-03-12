@@ -48,7 +48,7 @@
     HostVMDriveLetter = "V"
     HostVMPath        = "V:\VMs"                              # This value controls the path where the Nested VMs will be stored on all hosts.
     guiVHDXPath       = "C:\SCVMM\VHD\gui.vhdx"              # This value controls the location of the GUI VHDX.              
-    azshypervVHDXPath    = "C:\SCVMM\VHD\hyperv.vhdx"           # This value controls the location of the hyperv VHDX. \
+    azshypervVHDXPath    = "C:\SCVMM\VHD\AZSSCVMM.vhdx"           # This value controls the location of the hyperv VHDX. \
     
     MgmtHostConfig = @{
         Hostname = "AzSMGMT"
@@ -65,7 +65,7 @@
     )
     
     # SDN Lab Admin Password
-    SDNAdminPassword                     = '%staging-password%'                  # Do not change - this value is replaced during Bootstrap with the password supplied in the ARM deployment
+    SDNAdminPassword                     = 'ArcDemo123!!'                  # Do not change - this value is replaced during Bootstrap with the password supplied in the ARM deployment
 
     # VM Configuration
     NestedVMMemoryinGB                   = 105GB                                 # This value controls the amount of RAM for each Nested Hyper-V Host (AzSHOST1-2).
@@ -109,9 +109,6 @@
     MEM_DC                               = 2GB                                     # Memory provided for the Domain Controller VM
     MEM_BGP                              = 2GB                                     # Memory provided for the BGP-ToR-Router
     MEM_WAC                              = 10GB                                    # Memory provided for the Windows Admin Center VM
-
-    # Cluster S2D Storage Disk Size (per disk)
-    S2D_Disk_Size                        = 170GB                                    # Disk size for each of the 4 dynamic VHD disks attached to the 3 AzSHOST VMs that will be used to create the SDNCLUSTER
 
     # Physical Host Internal IP
     PhysicalHostInternalIP               = "192.168.1.20"                          # IP Address assigned to Internal Switch vNIC in a Single Host Configuration
