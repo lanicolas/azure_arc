@@ -453,11 +453,6 @@ function Set-SCVMMNodeVHDX {
     Install-WindowsFeature -Vhd $path -Name Hyper-V, RSAT-Hyper-V-Tools, Hyper-V-Powershell -Confirm:$false | Out-Null
     Start-Sleep -Seconds 5
 
-    # Install necessary tools to converge 
-    Write-Host "Installing and Configuring Failover ing on $Hostname"
-    Install-WindowsFeature -Vhd $path -Name Failover-ing -IncludeAllSubFeature -IncludeManagementTools | Out-Null 
-    Start-Sleep -Seconds 15
-
     Write-Host "Mounting VHDX file at $path"
     $partition = Mount-VHD -Path $path -Passthru | Get-Disk | Get-Partition -PartitionNumber 3
     if (!$partition.DriveLetter) {
