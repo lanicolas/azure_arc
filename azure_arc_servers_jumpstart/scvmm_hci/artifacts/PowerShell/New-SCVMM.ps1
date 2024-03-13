@@ -1154,24 +1154,7 @@ function Set-SCVMMDeployPrereqs {
         $localCred = $using:localcred
         $domainCred = $using:domainCred
         Invoke-Command -VMName $SCVMMConfig.DCName -Credential $domainCred -ArgumentList $SCVMMConfig -ScriptBlock {
-            $SCVMMConfig = $args[0]
-            $domainCredNoDomain = new-object -typename System.Management.Automation.PSCredential `
-                -argumentlist ($SCVMMConfig.LCMDeployUsername), (ConvertTo-SecureString $SCVMMConfig.SDNAdminPassword -AsPlainText -Force)
-            
-            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
-            Install-Module AsSCVMMADArtifactsPreCreationTool -Repository PSGallery -Force -Confirm:$false
-            $domainName = $SCVMMConfig.SDNDomainFQDN.Split('.')
-            $ouName = "OU=$($SCVMMConfig.LCMADOUName)"
-            foreach ($name in $domainName) {
-                $ouName += ",DC=$name"
-            }
-            $nodes = @()
-            foreach ($node in $SCVMMConfig.NodeHostConfig) {
-                $nodes += $node.Hostname.ToString()
-            }
-            Add-KdsRootKey -EffectiveTime ((Get-Date).AddHours(-10))
-            $deploymentPrefix = $SCVMMConfig.LCMDeploymentPrefix
-            New-SCVMMAdObjectsPreCreation -Deploy -AzureStackLCMUserCredential $domainCredNoDomain -AsSCVMMOUName $ouName -AsSCVMMPhysicalNodeList $nodes -DomainFQDN $SCVMMConfig.SDNDomainFQDN -AsSCVMMName $SCVMMConfig.Name -AsSCVMMDeploymentPrefix $deploymentPrefix
+        Write-Host "Configuring DNS on $DCName" 
         }
     }
     
@@ -1182,36 +1165,7 @@ function Set-SCVMMDeployPrereqs {
             $clientId = $args[2]
             $clientSecret = $args[3]
             $resourceGroup = $args[4]
-    
-            # Prep nodes for Azure Arc onboarding
-            winrm quickconfig -quiet
-            netsh advfirewall firewall add rule name="ICMP Allow incoming V4 echo request" protocol=icmpv4:8,any dir=in action=allow
-    
-            # Register PSGallery as a trusted repo
-            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
-            Register-PSRepository -Default -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-    
-            #Install Arc registration script from PSGallery 
-            Install-Module AzsSCVMM.ARCinstaller -Force
-    
-            #Install required PowerShell modules in your node for registration
-            Install-Module Az.Accounts -Force
-            Install-Module Az.ConnectedMachine -Force
-            Install-Module Az.Resources -Force
-            $azureAppCred = (New-Object System.Management.Automation.PSCredential $clientId, (ConvertTo-SecureString -String $clientSecret -AsPlainText -Force))
-            Connect-AzAccount -ServicePrincipal -SubscriptionId $subId -TenantId $tenantId -Credential $azureAppCred
-            $armtoken = Get-AzAccessToken
-
-            # Workaround for BITS transfer issue
-            Get-NetAdapter StorageA | Disable-NetAdapter -Confirm:$false | Out-Null
-            Get-NetAdapter StorageB | Disable-NetAdapter -Confirm:$false | Out-Null
-    
-            #Invoke the registration script. For this release, only eastus region is supported.
-            Invoke-AzStackSCVMMArcInitialization -SubscriptionID $subId -ResourceGroup $resourceGroup -TenantID $tenantId -Region eastus -Cloud "AzureCloud" -ArmAccessToken $armtoken.Token -AccountID $clientId
-            
-            Get-NetAdapter StorageA | Enable-NetAdapter -Confirm:$false | Out-Null
-            Get-NetAdapter StorageB | Enable-NetAdapter -Confirm:$false | Out-Null
+         Write-Host "test"
         }
     }
 }
