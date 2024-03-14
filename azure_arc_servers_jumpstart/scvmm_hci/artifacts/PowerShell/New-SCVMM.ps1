@@ -444,48 +444,42 @@ function Set-SCVMMNodeVHDX {
         $VMMac,
         $SCVMMConfig
     )
-    $DriveLetter = $($SCVMMConfig.HostVMPath).Split(':')
-    $path = (("\\localhost\") + ($DriveLetter[0] + "$") + ($DriveLetter[1]) + "\" + $($SCVMMConfig.MgmtHostConfig.Hostname) + ".vhdx") 
-    Write-Host "Performing offline installation of Hyper-V on $($SCVMMConfig.MgmtHostConfig.Hostname)"
-    Install-WindowsFeature -Vhd $path -Name Hyper-V, RSAT-Hyper-V-Tools, Hyper-V-Powershell -Confirm:$false | Out-Null
-    Start-Sleep -Seconds 20
+    foreach ($VM in $SCVMMConfig.NodeHostConfig) {
+        $Hostname=$VM.Hostname
+        $IPAddress=$VM.IP
+    }
 
-    # Mount VHDX - bunch of kludgey logic in here to deal with different partition layouts on the GUI and SCVMM VHD images
+    $DriveLetter = $($SCVMMConfig.HostVMPath).Split(':')
+    $path = (("\\localhost\") + ($DriveLetter[0] + "$") + ($DriveLetter[1]) + "\" + $Hostname + ".vhdx") 
+
+    Write-Host "Performing offline installation of Hyper-V on $Hostname"
+    Install-WindowsFeature -Vhd $path -Name Hyper-V, RSAT-Hyper-V-Tools, Hyper-V-Powershell -Confirm:$false | Out-Null
+    Start-Sleep -Seconds 5
+
     Write-Host "Mounting VHDX file at $path"
-    [string]$MountedDrive = ""
     $partition = Mount-VHD -Path $path -Passthru | Get-Disk | Get-Partition -PartitionNumber 3
     if (!$partition.DriveLetter) {
-        $MountedDrive = "X"
+        $MountedDrive = "Y"
         $partition | Set-Partition -NewDriveLetter $MountedDrive
-    }  
+    }   
     else {
         $MountedDrive = $partition.DriveLetter
     }
 
-    # Inject Answer File
     Write-Host "Injecting answer file to $path"
-    $UnattendXML = GenerateAnswerFile -HostName $($SCVMMConfig.MgmtHostConfig.Hostname) -IsMgmtVM $true -IPAddress $SCVMMConfig.MgmtHostConfig.IP -VMMac $VMMac -SCVMMConfig $SCVMMConfig
-    
+    $UnattendXML = GenerateAnswerFile -HostName $Hostname -IPAddress $IPAddress -VMMac $VMMac -SCVMMConfig $SCVMMConfig
     Write-Host "Mounted Disk Volume is: $MountedDrive" 
     $PantherDir = Get-ChildItem -Path ($MountedDrive + ":\Windows")  -Filter "Panther"
     if (!$PantherDir) { New-Item -Path ($MountedDrive + ":\Windows\Panther") -ItemType Directory -Force | Out-Null }
-
     Set-Content -Value $UnattendXML -Path ($MountedDrive + ":\Windows\Panther\Unattend.xml") -Force
 
-    # Creating folder structure on AzSMGMT
-    Write-Host "Creating VMs\Base folder structure on $($SCVMMConfig.MgmtHostConfig.Hostname)"
-    New-Item -Path ($MountedDrive + ":\VMs\Base") -ItemType Directory -Force | Out-Null
-
-    # Injecting configs into VMs
-    Write-Host "Injecting files into $path"
-    Copy-Item -Path "$Env:SCVMMDir\SCVMM-Config.psd1" -Destination ($MountedDrive + ":\") -Recurse -Force
-    Copy-Item -Path $guiVHDXPath -Destination ($MountedDrive + ":\VMs\Base\GUI.vhdx") -Force
-    Copy-Item -Path $SCVMMpath -Destination ($MountedDrive + ":\VMs\Base\AzSSCVMM.vhdx") -Force
-    New-Item -Path ($MountedDrive + ":\") -Name "Windows Admin Center" -ItemType Directory -Force | Out-Null
+    New-Item -Path ($MountedDrive + ":\VHD") -ItemType Directory -Force | Out-Null
+    Copy-Item -Path "$($SCVMMConfig.Paths.VHDDir)" -Destination ($MountedDrive + ":\VHD") -Recurse -Force            
+    # Copy-Item -Path "$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx" -Destination ($MountedDrive + ":\VHD") -Recurse -Force
 
     # Dismount VHDX
     Write-Host "Dismounting VHDX File at path $path"
-    Dismount-VHD $path 
+    Dismount-VHD $path  
 }
 
 function Set-DataDrives {
