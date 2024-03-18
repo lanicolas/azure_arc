@@ -1256,19 +1256,19 @@ Set-MGMTVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
 
 # Create the SCVMM VM
 Write-Host "[Build  - Step 4/10] Creating SCVMM VMs (AzSHOSTx)..." -ForegroundColor Green
-foreach ($VM in $SCVMMConfig.NodeHostConfig) {
-    $mac = New-SCVMMNodeVM -Name $VM.Hostname -VHDXPath $SCVMMpath -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
-    Set-SCVMMNodeVHDX -HostName $VM.Hostname -IPAddress $VM.IP -VMMac $mac  -SCVMMConfig $SCVMMConfig
-}
+#foreach ($VM in $SCVMMConfig.NodeHostConfig) {
+#    $mac = New-SCVMMNodeVM -Name $VM.Hostname -VHDXPath $SCVMMpath -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
+#    Set-SCVMMNodeVHDX -HostName $VM.Hostname -IPAddress $VM.IP -VMMac $mac  -SCVMMConfig $SCVMMConfig
+#}
     
 # Start Virtual Machines
 Write-Host "[Build  - Step 5/10] Starting VMs..." -ForegroundColor Green
 Write-Host "Starting VM: $($SCVMMConfig.MgmtHostConfig.Hostname)"
 Start-VM -Name $SCVMMConfig.MgmtHostConfig.Hostname
-foreach ($VM in $SCVMMConfig.NodeHostConfig) {
-    Write-Host "Starting VM: $($VM.Hostname)"
-    Start-VM -Name $VM.Hostname
-}
+#foreach ($VM in $SCVMMConfig.NodeHostConfig) {
+#    Write-Host "Starting VM: $($VM.Hostname)"
+#    Start-VM -Name $VM.Hostname
+#}
 
 #######################################################################################
 # Prep the virtualization environment
@@ -1313,7 +1313,7 @@ New-DCVM -SCVMMConfig $SCVMMConfig -localCred $localCred -domainCred $domainCred
 #######################################################################################
 
 Write-Host "[Build  - Step 9/10] Preparing SCVMM  Azure deployment..." -ForegroundColor Green
-Set-SCVMMDeployPrereqs -SCVMMConfig $SCVMMConfig -localCred $localCred -domainCred $domainCred
+#Set-SCVMMDeployPrereqs -SCVMMConfig $SCVMMConfig -localCred $localCred -domainCred $domainCred
 
 #  complete. Finish up
 Write-Host "[Build  - Step 10/10] Tidying up..." -ForegroundColor Green
