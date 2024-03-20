@@ -915,6 +915,7 @@ function New-TestVM {
     Write-Host "Creating Test VM on HyperV Host"
     $adminUser = $env:adminUsername
     $Unattend = GenerateAnswerFile -Hostname $SCVMMConfig. -IsDCVM $false -SCVMMConfig $SCVMMConfig
+
     Invoke-Command -VMName $SCVMMConfig.NodeHostConfig.Hostname -Credential $localCred -ScriptBlock {
         $adminUser = $using:adminUser
         $SCVMMConfig = $using:SCVMMConfig
@@ -935,10 +936,6 @@ function New-TestVM {
         Write-Host "Setting $VMName Memory"
         Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $true -StartupBytes $SCVMMConfig.TestVM.Memory -MaximumBytes $SCVMMConfig.TestVM.Memory -MinimumBytes 500MB | Out-Null
 
-        Write-Host "Configuring $VMName's networking"
-        Remove-VMNetworkAdapter -VMName $VMName -Name "Network Adapter" | Out-Null
-        Add-VMNetworkAdapter -VMName $VMName -Name $SCVMMConfig.TestVM.Name -SwitchName $SCVMMConfig.FabricSwitch -DeviceNaming 'On' | Out-Null
-        
         Write-Host "Configuring $VMName's settings"
         Set-VMProcessor -VMName $VMName -Count 2 | Out-Null
         Set-VM -Name $VMName -AutomaticStartAction Start -AutomaticStopAction ShutDown | Out-Null
@@ -1379,7 +1376,7 @@ $VM=$SCVMMConfig.NodeHostConfig
 Write-Host "[Build  - Step 6/12] Configuring host networking and storage..." -ForegroundColor Green
 # Wait for AzSHOSTs to come online
 Test-AllVMsAvailable -SCVMMConfig $SCVMMConfig -Credential $localCred
-Start-Sleep -Seconds 60
+Start-Sleep -Seconds 180
 
 # Format and partition data drives
 Set-DataDrives -SCVMMConfig $SCVMMConfig -Credential $localCred
