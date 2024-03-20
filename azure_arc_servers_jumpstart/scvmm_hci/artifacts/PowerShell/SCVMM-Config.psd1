@@ -64,6 +64,16 @@
         }
     )
     
+    TestVM = @{
+        Name = "Test01"
+        Memory       = 2GB
+    }
+
+    SCVMM = @{
+        Name = "SCVMM"
+        Memory       = 2GB
+    }
+
     # SDN Lab Admin Password
     SDNAdminPassword                     = 'ArcDemo123!!'                  # Do not change - this value is replaced during Bootstrap with the password supplied in the ARM deployment
 

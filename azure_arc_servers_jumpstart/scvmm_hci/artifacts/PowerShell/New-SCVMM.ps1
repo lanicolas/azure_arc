@@ -304,12 +304,12 @@ function Restart-VMs {
         $SCVMMConfig,
         [PSCredential]$Credential
     )
-    foreach ($VM in $SCVMMConfig.NodeHostConfig) {
+    $VM = $SCVMMConfig.NodeHostConfig 
         Write-Host "Restarting VM: $($VM.Hostname)"
         Invoke-Command -VMName $VM.Hostname -Credential $Credential -ScriptBlock {
             Restart-Computer -Force
         }
-    }
+
     Write-Host "Restarting VM: $($SCVMMConfig.MgmtHostConfig.Hostname)"
     Invoke-Command -VMName $SCVMMConfig.MgmtHostConfig.Hostname -Credential $Credential -ScriptBlock {
         Restart-Computer -Force
@@ -351,7 +351,7 @@ function New-ManagementVM {
     return $vmMac
 }
 
-function New-SCVMMNodeVM {
+function New-HyperVVM {
     param (
         $Name,
         $VHDXPath,
@@ -439,49 +439,53 @@ function Set-MGMTVHDX {
     Dismount-VHD $path 
 }
 
-function Set-SCVMMNodeVHDX {
+function Set-HyperVVMVHDX {
     param (
         $VMMac,
         $SCVMMConfig
     )
-    foreach ($VM in $SCVMMConfig.NodeHostConfig) {
-        $Hostname=$VM.Hostname
-        $IPAddress=$VM.IP
-    }
-
     $DriveLetter = $($SCVMMConfig.HostVMPath).Split(':')
-    $path = (("\\localhost\") + ($DriveLetter[0] + "$") + ($DriveLetter[1]) + "\" + $Hostname + ".vhdx") 
-
-    Write-Host "Performing offline installation of Hyper-V on $Hostname"
+    $path = (("\\localhost\") + ($DriveLetter[0] + "$") + ($DriveLetter[1]) + "\" + $($SCVMMConfig.NodeHostConfig.Hostname) + ".vhdx") 
+    Write-Host "Performing offline installation of Hyper-V on $($SCVMMConfig.NodeHostConfig.Hostname)"
     Install-WindowsFeature -Vhd $path -Name Hyper-V, RSAT-Hyper-V-Tools, Hyper-V-Powershell -Confirm:$false | Out-Null
-    Start-Sleep -Seconds 5
+    Start-Sleep -Seconds 20
 
+    # Mount VHDX - bunch of kludgey logic in here to deal with different partition layouts on the GUI and SCVMM VHD images
     Write-Host "Mounting VHDX file at $path"
+    [string]$MountedDrive = ""
     $partition = Mount-VHD -Path $path -Passthru | Get-Disk | Get-Partition -PartitionNumber 3
     if (!$partition.DriveLetter) {
-        $MountedDrive = "Y"
+        $MountedDrive = "X"
         $partition | Set-Partition -NewDriveLetter $MountedDrive
-    }   
+    }  
     else {
         $MountedDrive = $partition.DriveLetter
     }
 
+    # Inject Answer File
     Write-Host "Injecting answer file to $path"
-    $UnattendXML = GenerateAnswerFile -HostName $Hostname -IPAddress $IPAddress -VMMac $VMMac -SCVMMConfig $SCVMMConfig
+    $UnattendXML = GenerateAnswerFile -HostName $($SCVMMConfig.NodeHostConfig.Hostname) -IsMgmtVM $false -IPAddress $SCVMMConfig.NodeHostConfig.IP -VMMac $VMMac -SCVMMConfig $SCVMMConfig
+    
     Write-Host "Mounted Disk Volume is: $MountedDrive" 
     $PantherDir = Get-ChildItem -Path ($MountedDrive + ":\Windows")  -Filter "Panther"
     if (!$PantherDir) { New-Item -Path ($MountedDrive + ":\Windows\Panther") -ItemType Directory -Force | Out-Null }
+
     Set-Content -Value $UnattendXML -Path ($MountedDrive + ":\Windows\Panther\Unattend.xml") -Force
 
-    New-Item -Path ($MountedDrive + ":\VHD") -ItemType Directory -Force | Out-Null
-    Copy-Item -Path "$($SCVMMConfig.Paths.VHDDir)" -Destination ($MountedDrive + ":\VHD") -Recurse -Force            
-    # Copy-Item -Path "$($SCVMMConfig.Paths.VHDDir)\Ubuntu.vhdx" -Destination ($MountedDrive + ":\VHD") -Recurse -Force
+    # Creating folder structure on AzSMGMT
+    Write-Host "Creating VMs\Base folder structure on $($SCVMMConfig.NodeHostConfig.Hostname)"
+    New-Item -Path ($MountedDrive + ":\VMs\Base") -ItemType Directory -Force | Out-Null
+
+    # Injecting configs into VMs
+    Write-Host "Injecting files into $path"
+    Copy-Item -Path "$Env:SCVMMDir\SCVMM-Config.psd1" -Destination ($MountedDrive + ":\") -Recurse -Force
+    Copy-Item -Path $guiVHDXPath -Destination ($MountedDrive + ":\VMs\Base\GUI.vhdx") -Force
+    Copy-Item -Path $SCVMMpath -Destination ($MountedDrive + ":\VMs\Base\AzSSCVMM.vhdx") -Force
 
     # Dismount VHDX
     Write-Host "Dismounting VHDX File at path $path"
-    Dismount-VHD $path  
+    Dismount-VHD $path 
 }
-
 function Set-DataDrives {
     param (
         $SCVMMConfig,
@@ -489,11 +493,9 @@ function Set-DataDrives {
     )
     $VMs = @()
     $VMs += $SCVMMConfig.MgmtHostConfig.Hostname
-    foreach ($node in $SCVMMConfig.NodeHostConfig) {
-        $VMs += $node.Hostname
-    }
+    $VMs += $SCVMMConfig.NodeHostConfig.Hostname
     foreach ($VM in $VMs) {
-        Invoke-Command -VMName $VM -Credential $Credential -ScriptBlock {
+            Invoke-Command -VMName $VM -Credential $Credential -ScriptBlock {
             Set-Disk -Number 1 -IsOffline $false | Out-Null
                 Initialize-Disk -Number 1 | Out-Null
                 New-Partition -DiskNumber 1 -UseMaximumSize -AssignDriveLetter | Out-Null
@@ -530,9 +532,9 @@ function Test-AllVMsAvailable
     )
     Write-Host "Testing whether VMs are available..."
     Test-VMAvailable -VMName $SCVMMConfig.MgmtHostConfig.Hostname -Credential $Credential
-    foreach ($VM in $SCVMMConfig.NodeHostConfig) {
+    $VM=$SCVMMConfig.NodeHostConfig
         Test-VMAvailable -VMName $VM.Hostname -Credential $Credential
-    }
+    
 }
     
 function New-NATSwitch {
@@ -577,7 +579,7 @@ function Set-NICs {
     }
 
     $int = 9
-    foreach ($VM in $SCVMMConfig.NodeHostConfig) {
+    $VM=$SCVMMConfig.NodeHostConfig
         $int++
         Write-Host "Setting NICs on VM $($VM.Hostname)"
         Invoke-Command -VMName $VM.Hostname -Credential $Credential -ArgumentList $SCVMMConfig, $VM -ScriptBlock {
@@ -624,7 +626,7 @@ function Set-NICs {
                 New-ItemProperty -Path HKLM:\SOFTWARE\Policies\Microsoft\Windows\CredentialsDelegation\AllowFreshCredentialsWhenNTLMOnly `
                     -Name 1 -Value * -PropertyType String -Force 
             } -InDisconnectedSession | Out-Null
-        }
+        
     }
 }
 
@@ -904,6 +906,115 @@ function New-DCVM {
     }
 }
 
+function New-TestVM {
+    Param (
+        $SCVMMConfig,
+        [PSCredential]$localCred,
+        [PSCredential]$domainCred
+    )
+    Write-Host "Creating Test VM on HyperV Host"
+    $adminUser = $env:adminUsername
+    $Unattend = GenerateAnswerFile -Hostname $SCVMMConfig. -IsDCVM $false -SCVMMConfig $SCVMMConfig
+    Invoke-Command -VMName $SCVMMConfig.NodeHostConfig.Hostname -Credential $localCred -ScriptBlock {
+        $adminUser = $using:adminUser
+        $SCVMMConfig = $using:SCVMMConfig
+        $localCred = $using:localcred
+        $domainCred = $using:domainCred
+        $ParentDiskPath = "C:\VMs\Base\"
+        $vmpath = "D:\VMs\"
+        $OSVHDX = "GUI.vhdx"
+        $VMName = $SCVMMConfig.TestVM.Name
+
+        # Create Virtual Machine
+        Write-Host "Creating $VMName differencing disks"  
+        New-VHD -ParentPath ($ParentDiskPath + $OSVHDX) -Path ($vmpath + $VMName + '\' + $VMName + '.vhdx') -Differencing | Out-Null
+
+        Write-Host "Creating $VMName virtual machine"
+        New-VM -Name $VMName -VHDPath ($vmpath + $VMName + '\' + $VMName + '.vhdx') -Path ($vmpath + $VMName) -Generation 2 | Out-Null
+
+        Write-Host "Setting $VMName Memory"
+        Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $true -StartupBytes $SCVMMConfig.TestVM.Memory -MaximumBytes $SCVMMConfig.TestVM.Memory -MinimumBytes 500MB | Out-Null
+
+        Write-Host "Configuring $VMName's networking"
+        Remove-VMNetworkAdapter -VMName $VMName -Name "Network Adapter" | Out-Null
+        Add-VMNetworkAdapter -VMName $VMName -Name $SCVMMConfig.TestVM.Name -SwitchName $SCVMMConfig.FabricSwitch -DeviceNaming 'On' | Out-Null
+        
+        Write-Host "Configuring $VMName's settings"
+        Set-VMProcessor -VMName $VMName -Count 2 | Out-Null
+        Set-VM -Name $VMName -AutomaticStartAction Start -AutomaticStopAction ShutDown | Out-Null
+
+        # Inject Answer File
+        Write-Host "Mounting and injecting answer file into the $VMName VM."        
+        New-Item -Path "C:\TempMount" -ItemType Directory | Out-Null
+        Mount-WindowsImage -Path "C:\TempMount" -Index 1 -ImagePath ($vmpath + $VMName + '\' + $VMName + '.vhdx') | Out-Null
+        Write-Host "Applying Unattend file to Disk Image..."
+        New-Item -Path C:\TempMount\windows -ItemType Directory -Name Panther -Force | Out-Null
+        Set-Content -Value $using:Unattend -Path "C:\TempMount\Windows\Panther\Unattend.xml"  -Force
+        Write-Host "Dismounting Windows Image"
+        Dismount-WindowsImage -Path "C:\TempMount" -Save | Out-Null
+        Remove-Item "C:\TempMount" | Out-Null
+
+        # Start Virtual Machine
+        Write-Host "Starting Virtual Machine $VMName" 
+        Start-VM -Name $VMName | Out-Null
+    
+    }
+}
+
+function New-SCVMMVM {
+    Param (
+        $SCVMMConfig,
+        [PSCredential]$localCred,
+        [PSCredential]$domainCred
+    )
+    Write-Host "Creating SCVMM VM on Management Host"
+    $adminUser = $env:adminUsername
+    $Unattend = GenerateAnswerFile -Hostname $SCVMMConfig. -IsDCVM $false -SCVMMConfig $SCVMMConfig
+    Invoke-Command -VMName $SCVMMConfig.MgmtHostConfig.Hostname -Credential $localCred -ScriptBlock {
+        $adminUser = $using:adminUser
+        $SCVMMConfig = $using:SCVMMConfig
+        $localCred = $using:localcred
+        $domainCred = $using:domainCred
+        $ParentDiskPath = "C:\VMs\Base\"
+        $vmpath = "D:\VMs\"
+        $OSVHDX = "GUI.vhdx"
+        $VMName = $SCVMMConfig.SCVMM.Name
+
+        # Create Virtual Machine
+        Write-Host "Creating $VMName differencing disks"  
+        New-VHD -ParentPath ($ParentDiskPath + $OSVHDX) -Path ($vmpath + $VMName + '\' + $VMName + '.vhdx') -Differencing | Out-Null
+
+        Write-Host "Creating $VMName virtual machine"
+        New-VM -Name $VMName -VHDPath ($vmpath + $VMName + '\' + $VMName + '.vhdx') -Path ($vmpath + $VMName) -Generation 2 | Out-Null
+
+        Write-Host "Setting $VMName Memory"
+        Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $true -StartupBytes $SCVMMConfig.SCVMM.Memory -MaximumBytes $SCVMMConfig.SCVMM.Memory -MinimumBytes 500MB | Out-Null
+
+        Write-Host "Configuring $VMName's networking"
+        Remove-VMNetworkAdapter -VMName $VMName -Name "Network Adapter" | Out-Null
+        Add-VMNetworkAdapter -VMName $VMName -Name $SCVMMConfig.TestVM.Name -SwitchName $SCVMMConfig.FabricSwitch -DeviceNaming 'On' | Out-Null
+        
+        Write-Host "Configuring $VMName's settings"
+        Set-VMProcessor -VMName $VMName -Count 2 | Out-Null
+        Set-VM -Name $VMName -AutomaticStartAction Start -AutomaticStopAction ShutDown | Out-Null
+
+        # Inject Answer File
+        Write-Host "Mounting and injecting answer file into the $VMName VM."        
+        New-Item -Path "C:\TempMount" -ItemType Directory | Out-Null
+        Mount-WindowsImage -Path "C:\TempMount" -Index 1 -ImagePath ($vmpath + $VMName + '\' + $VMName + '.vhdx') | Out-Null
+        Write-Host "Applying Unattend file to Disk Image..."
+        New-Item -Path C:\TempMount\windows -ItemType Directory -Name Panther -Force | Out-Null
+        Set-Content -Value $using:Unattend -Path "C:\TempMount\Windows\Panther\Unattend.xml"  -Force
+        Write-Host "Dismounting Windows Image"
+        Dismount-WindowsImage -Path "C:\TempMount" -Save | Out-Null
+        Remove-Item "C:\TempMount" | Out-Null
+
+        # Start Virtual Machine
+        Write-Host "Starting Virtual Machine $VMName" 
+        Start-VM -Name $VMName | Out-Null
+    
+    }
+}
 function Set-DHCPServerOnDC {
     Param (
         $SCVMMConfig,
@@ -1152,7 +1263,7 @@ function Set-SCVMMDeployPrereqs {
         }
     }
     
-    foreach ($node in $SCVMMConfig.NodeHostConfig) {
+    $node=$SCVMMConfig.NodeHostConfig
         Invoke-Command -VMName $node.Hostname -Credential $localCred -ArgumentList $env:subscriptionId, $env:spnTenantId, $env:spnClientID, $env:spnClientSecret, $env:resourceGroup -ScriptBlock {
             $subId = $args[0]
             $tenantId = $args[1]
@@ -1161,7 +1272,7 @@ function Set-SCVMMDeployPrereqs {
             $resourceGroup = $args[4]
          Write-Host "test"
         }
-    }
+    
 }
 
 #endregion
@@ -1182,13 +1293,15 @@ $WarningPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
 # Create paths
+$path=$SCVMMConfig.Paths.GetEnumerator()
 foreach ($path in $SCVMMConfig.Paths.GetEnumerator()) {
     Write-Host "Creating $($path.Key) path at $($path.Value)"
     New-Item -Path $path.Value -ItemType Directory -Force | Out-Null
 }
 
+
 # Download SCVMM VHDs
-Write-Host "[Build  - Step 1/10] Downloading SCVMM VHDs" -ForegroundColor Green
+Write-Host "[Build  - Step 1/12] Downloading SCVMM VHDs" -ForegroundColor Green
 BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.vhdx" }
 BITSRequest -Params @{'Uri'='https://aka.ms/VHDHash-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.sha256" }
 $checksum = Get-FileHash -Path "$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.vhdx"
@@ -1200,17 +1313,9 @@ else {
     Write-Error "AZSCHI.vhdx is corrupt. Aborting deployment. Re-run C:\SCVMM\SCVMMLogonScript.ps1 to retry"
     throw 
 }
-BITSRequest -Params @{'Uri'='https://aka.ms/VHD-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"}
-BITSRequest -Params @{'Uri'='https://aka.ms/VHDHash-HCIBox-Mgmt-Prod'; 'Filename'="$($SCVMMConfig.Paths.VHDDir)\GUI.sha256" }
-$checksum = Get-FileHash -Path "$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"
-$hash = Get-Content -Path "$($SCVMMConfig.Paths.VHDDir)\GUI.sha256"
-if ($checksum.Hash -eq $hash) {
-    Write-Host "GUI.vhdx has valid checksum. Continuing..."
-}
-else {
-    Write-Error "GUI.vhdx is corrupt. Aborting deployment. Re-run C:\SCVMM\SCVMMLogonScript.ps1 to retry"
-    throw 
-}
+
+Copy-Item "$($SCVMMConfig.Paths.VHDDir)\AZSSCVMM.vhdx" "$($SCVMMConfig.Paths.VHDDir)\GUI.vhdx"
+
 # Set credentials
 $localCred = new-object -typename System.Management.Automation.PSCredential `
     -argumentlist "Administrator", (ConvertTo-SecureString $SCVMMConfig.SDNAdminPassword -AsPlainText -Force)
@@ -1219,7 +1324,7 @@ $domainCred = new-object -typename System.Management.Automation.PSCredential `
     -argumentlist (($SCVMMConfig.SDNDomainFQDN.Split(".")[0]) +"\Administrator"), (ConvertTo-SecureString $SCVMMConfig.SDNAdminPassword -AsPlainText -Force)
 
 # Enable PSRemoting
-Write-Host "[Build  - Step 2/10] Preparing Azure VM virtualization host..." -ForegroundColor Green
+Write-Host "[Build  - Step 2/12] Preparing Azure VM virtualization host..." -ForegroundColor Green
 Write-Host "Enabling PS Remoting on client..."
 Enable-PSRemoting
 set-item WSMan:localhost\client\trustedhosts -value * -Force
@@ -1250,30 +1355,28 @@ Copy-Item -Path $SCVMMConfig.azshypervVHDXPath -Destination $SCVMMpath -Force | 
 # Create the three nested Virtual Machines 
 ################################################################################
 # First create the Management VM (AzSMGMT)
-Write-Host "[Build  - Step 3/10] Creating Management VM (AzSMGMT)..." -ForegroundColor Green
+Write-Host "[Build  - Step 3/12] Creating Management VM (AzSMGMT)..." -ForegroundColor Green
 $mgmtMac = New-ManagementVM -Name $($SCVMMConfig.MgmtHostConfig.Hostname) -VHDXPath "$HostVMPath\GUI.vhdx" -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
 Set-MGMTVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
 
-# Create the SCVMM VM
-Write-Host "[Build  - Step 4/10] Creating SCVMM VMs (AzSHOSTx)..." -ForegroundColor Green
-#foreach ($VM in $SCVMMConfig.NodeHostConfig) {
-#    $mac = New-SCVMMNodeVM -Name $VM.Hostname -VHDXPath $SCVMMpath -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
-#    Set-SCVMMNodeVHDX -HostName $VM.Hostname -IPAddress $VM.IP -VMMac $mac  -SCVMMConfig $SCVMMConfig
-#}
-    
+# Create the HyèrV VM
+Write-Host "[Build  - Step 4/12] Creating HyperV VM..." -ForegroundColor Green
+$mgmtMac = New-ManagementVM -Name $($SCVMMConfig.NodeHostConfig.Hostname) -VHDXPath "$SCVMMpath" -VMSwitch $InternalSwitch -SCVMMConfig $SCVMMConfig
+Set-HyperVVMVHDX -VMMac $mgmtMac -SCVMMConfig $SCVMMConfig
+
+   
 # Start Virtual Machines
-Write-Host "[Build  - Step 5/10] Starting VMs..." -ForegroundColor Green
+Write-Host "[Build  - Step 5/12] Starting VMs..." -ForegroundColor Green
 Write-Host "Starting VM: $($SCVMMConfig.MgmtHostConfig.Hostname)"
 Start-VM -Name $SCVMMConfig.MgmtHostConfig.Hostname
-#foreach ($VM in $SCVMMConfig.NodeHostConfig) {
-#    Write-Host "Starting VM: $($VM.Hostname)"
-#    Start-VM -Name $VM.Hostname
-#}
+$VM=$SCVMMConfig.NodeHostConfig
+    Write-Host "Starting VM: $($VM.Hostname)"
+    Start-VM -Name $VM.Hostname
 
 #######################################################################################
 # Prep the virtualization environment
 #######################################################################################
-Write-Host "[Build  - Step 6/10] Configuring host networking and storage..." -ForegroundColor Green
+Write-Host "[Build  - Step 6/12] Configuring host networking and storage..." -ForegroundColor Green
 # Wait for AzSHOSTs to come online
 Test-AllVMsAvailable -SCVMMConfig $SCVMMConfig -Credential $localCred
 Start-Sleep -Seconds 60
@@ -1297,26 +1400,33 @@ New-NATSwitch -SCVMMConfig $SCVMMConfig
 Set-FabricNetwork -SCVMMConfig $SCVMMConfig -localCred $localCred
 
 #######################################################################################
-# Provision the router, domain controller VMs and join the hosts to the domain
+# Provision the router, domain controller, SCVMM and Test VMs and join the hosts to the domain
 #######################################################################################
 # Provision Router VM on AzSMGMT
-Write-Host "[Build  - Step 7/10] Build router VM..." -ForegroundColor Green
+Write-Host "[Build  - Step 7/12] Build router VM..." -ForegroundColor Green
 New-RouterVM -SCVMMConfig $SCVMMConfig -localCred $localCred
 
 # Provision Domain controller VM on AzSMGMT
-Write-Host "[Build  - Step 8/10] Building Domain Controller VM..." -ForegroundColor Green
+Write-Host "[Build  - Step 8/12] Building Domain Controller VM..." -ForegroundColor Green
 New-DCVM -SCVMMConfig $SCVMMConfig -localCred $localCred -domainCred $domainCred
 
+# Provision SCVMM VM on AzSMGMT
+Write-Host "[Build  - Step 9/12] Building SCVMM VM..." -ForegroundColor Green
+New-SCVMMVM -SCVMMConfig $SCVMMConfig -localCred $localCred -domainCred $domainCred
+
+# Provision Test VM on HyperV Host
+Write-Host "[Build  - Step 10/12] Building Test VM..." -ForegroundColor Green
+New-TestVM -SCVMMConfig $SCVMMConfig -localCred $localCred -domainCred $domainCred
 
 #######################################################################################
 # Prepare the  for deployment
 #######################################################################################
 
-Write-Host "[Build  - Step 9/10] Preparing SCVMM  Azure deployment..." -ForegroundColor Green
-#Set-SCVMMDeployPrereqs -SCVMMConfig $SCVMMConfig -localCred $localCred -domainCred $domainCred
+Write-Host "[Build  - Step 11/12] Preparing SCVMM  Azure deployment..." -ForegroundColor Green
+Set-SCVMMDeployPrereqs -SCVMMConfig $SCVMMConfig -localCred $localCred -domainCred $domainCred
 
 #  complete. Finish up
-Write-Host "[Build  - Step 10/10] Tidying up..." -ForegroundColor Green
+Write-Host "[Build  - Step 12/12] Tidying up..." -ForegroundColor Green
 
 $endtime = Get-Date
 $timeSpan = New-TimeSpan -Start $starttime -End $endtime
