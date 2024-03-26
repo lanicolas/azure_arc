@@ -118,7 +118,7 @@
     # AzSMGMT Management VM's Memory Settings
     MEM_DC                               = 2GB                                     # Memory provided for the Domain Controller VM
     MEM_BGP                              = 2GB                                     # Memory provided for the BGP-ToR-Router
-    MEM_WAC                              = 10GB                                    # Memory provided for the Windows Admin Center VM
+    MEM_SCVMM                              = 10GB                                    # Memory provided for the Windows Admin Center VM
 
     # Physical Host Internal IP
     PhysicalHostInternalIP               = "192.168.1.20"                          # IP Address assigned to Internal Switch vNIC in a Single Host Configuration
@@ -131,8 +131,8 @@
 
     # Management IPs for Console and Domain Controller
     DCIP                                 = "192.168.1.254/24"
-    WACIP                                = "192.168.1.9/24"
-    WACMAC                               = "10155D010B00"
+    SCVMMIP                                = "192.168.1.9/24"
+    SCVMMMAC                               = "10155D010B00"
 
     # Router Config
     BGPRouterName                        = "vm-router"

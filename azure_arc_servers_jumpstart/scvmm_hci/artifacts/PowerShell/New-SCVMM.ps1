@@ -912,10 +912,9 @@ function New-TestVM {
         [PSCredential]$localCred,
         [PSCredential]$domainCred
     )
-    Write-Host "Creating Test VM on HyperV Host"
+    Write-Host "Creating domain controller VM"
     $adminUser = $env:adminUsername
-    $Unattend = GenerateAnswerFile -Hostname $SCVMMConfig. -IsDCVM $false -SCVMMConfig $SCVMMConfig
-
+    $Unattend = GenerateAnswerFile -Hostname $SCVMMConfig.TestVM.Name -IsDCVM $true -SCVMMConfig $SCVMMConfig
     Invoke-Command -VMName $SCVMMConfig.NodeHostConfig.Hostname -Credential $localCred -ScriptBlock {
         $adminUser = $using:adminUser
         $SCVMMConfig = $using:SCVMMConfig
@@ -934,7 +933,7 @@ function New-TestVM {
         New-VM -Name $VMName -VHDPath ($vmpath + $VMName + '\' + $VMName + '.vhdx') -Path ($vmpath + $VMName) -Generation 2 | Out-Null
 
         Write-Host "Setting $VMName Memory"
-        Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $true -StartupBytes $SCVMMConfig.TestVM.Memory -MaximumBytes $SCVMMConfig.TestVM.Memory -MinimumBytes 500MB | Out-Null
+        Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $true -StartupBytes $SCVMMConfig.MEM_DC -MaximumBytes $SCVMMConfig.MEM_DC -MinimumBytes 500MB | Out-Null
 
         Write-Host "Configuring $VMName's settings"
         Set-VMProcessor -VMName $VMName -Count 2 | Out-Null
@@ -954,63 +953,200 @@ function New-TestVM {
         # Start Virtual Machine
         Write-Host "Starting Virtual Machine $VMName" 
         Start-VM -Name $VMName | Out-Null
-    
+                # Wait until the VM is restarted
+                while ((Invoke-Command -VMName $VMName -Credential $using:localCred { "Test" } -ea SilentlyContinue) -ne "Test") { Start-Sleep -Seconds 1 }
+
     }
+
+
 }
 
 function New-SCVMMVM {
     Param (
         $SCVMMConfig,
-        [PSCredential]$localCred,
-        [PSCredential]$domainCred
+        $localCred,
+        $domainCred
     )
-    Write-Host "Creating SCVMM VM on Management Host"
-    $adminUser = $env:adminUsername
-    $Unattend = GenerateAnswerFile -Hostname $SCVMMConfig. -IsDCVM $false -SCVMMConfig $SCVMMConfig
-    Invoke-Command -VMName $SCVMMConfig.MgmtHostConfig.Hostname -Credential $localCred -ScriptBlock {
-        $adminUser = $using:adminUser
-        $SCVMMConfig = $using:SCVMMConfig
-        $localCred = $using:localcred
-        $domainCred = $using:domainCred
+    $VMName = $SCVMMConfig.SCVMM.Name
+    $UnattendXML = GenerateAnswerFile -HostName $VMName -IPAddress $SCVMMConfig.SCVMMIP -VMMac $SCVMMConfig.SCVMMMAC -SCVMMConfig $SCVMMConfig
+    Invoke-Command -VMName AzSMGMT -Credential $localCred -ScriptBlock {
+        $VMName = $using:VMName
         $ParentDiskPath = "C:\VMs\Base\"
-        $vmpath = "D:\VMs\"
+        $VHDPath = "D:\VMs\"
         $OSVHDX = "GUI.vhdx"
-        $VMName = $SCVMMConfig.SCVMM.Name
+        $BaseVHDPath = $ParentDiskPath + $OSVHDX
+        $SCVMMConfig = $using:SCVMMConfig
+        $localCred = $using:localCred
+        $domainCred = $using:domainCred
 
-        # Create Virtual Machine
-        Write-Host "Creating $VMName differencing disks"  
-        New-VHD -ParentPath ($ParentDiskPath + $OSVHDX) -Path ($vmpath + $VMName + '\' + $VMName + '.vhdx') -Differencing | Out-Null
+        # Create Host OS Disk
+        Write-Host "Creating $VMName differencing disks"
+        New-VHD -ParentPath $BaseVHDPath -Path (($VHDPath) + ($VMName) + '\' + $VMName + (".vhdx")) -Differencing | Out-Null
 
-        Write-Host "Creating $VMName virtual machine"
-        New-VM -Name $VMName -VHDPath ($vmpath + $VMName + '\' + $VMName + '.vhdx') -Path ($vmpath + $VMName) -Generation 2 | Out-Null
+        # Mount VHDX
+        Import-Module DISM
+        Write-Host "Mounting $VMName VHD"
+        New-Item -Path "C:\TempSCVMMMount" -ItemType Directory | Out-Null
+        Mount-WindowsImage -Path "C:\TempSCVMMMount" -Index 1 -ImagePath (($VHDPath) + ($VMName) + '\' + $VMName + (".vhdx")) | Out-Null
 
-        Write-Host "Setting $VMName Memory"
-        Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $true -StartupBytes $SCVMMConfig.SCVMM.Memory -MaximumBytes $SCVMMConfig.SCVMM.Memory -MinimumBytes 500MB | Out-Null
+        # Copy Source Files
+        Write-Host "Copying Application and Script Source Files to $VMName"
+        New-Item -Path C:\TempSCVMMMount\VHDs -ItemType Directory -Force | Out-Null
 
-        Write-Host "Configuring $VMName's networking"
-        Remove-VMNetworkAdapter -VMName $VMName -Name "Network Adapter" | Out-Null
-        Add-VMNetworkAdapter -VMName $VMName -Name $SCVMMConfig.TestVM.Name -SwitchName $SCVMMConfig.FabricSwitch -DeviceNaming 'On' | Out-Null
-        
-        Write-Host "Configuring $VMName's settings"
-        Set-VMProcessor -VMName $VMName -Count 2 | Out-Null
+        # Create VM
+        Write-Host "Provisioning the VM $VMName"
+        New-VM -Name $VMName -VHDPath (($VHDPath) + ($VMName) + '\' + $VMName + (".vhdx")) -Path $VHDPath -Generation 2 | Out-Null
+        Set-VMMemory -VMName $VMName -DynamicMemoryEnabled $true -StartupBytes $SCVMMConfig.MEM_SCVMM -MaximumBytes $SCVMMConfig.MEM_SCVMM -MinimumBytes 500MB | Out-Null
         Set-VM -Name $VMName -AutomaticStartAction Start -AutomaticStopAction ShutDown | Out-Null
+        Write-Host "Configuring $VMName networking"
+        Remove-VMNetworkAdapter -VMName $VMName -Name "Network Adapter"
+        Add-VMNetworkAdapter -VMName $VMName -Name "Fabric" -SwitchName $SCVMMConfig.FabricSwitch -DeviceNaming On
+        Set-VMNetworkAdapter -VMName $VMName -StaticMacAddress $SCVMMConfig.SCVMMMAC # Mac address is linked to the answer file required in next step
 
-        # Inject Answer File
-        Write-Host "Mounting and injecting answer file into the $VMName VM."        
-        New-Item -Path "C:\TempMount" -ItemType Directory | Out-Null
-        Mount-WindowsImage -Path "C:\TempMount" -Index 1 -ImagePath ($vmpath + $VMName + '\' + $VMName + '.vhdx') | Out-Null
-        Write-Host "Applying Unattend file to Disk Image..."
-        New-Item -Path C:\TempMount\windows -ItemType Directory -Name Panther -Force | Out-Null
-        Set-Content -Value $using:Unattend -Path "C:\TempMount\Windows\Panther\Unattend.xml"  -Force
-        Write-Host "Dismounting Windows Image"
-        Dismount-WindowsImage -Path "C:\TempMount" -Save | Out-Null
-        Remove-Item "C:\TempMount" | Out-Null
+        # Apply custom Unattend.xml file
+        New-Item -Path C:\TempSCVMMMount\windows -ItemType Directory -Name Panther -Force | Out-Null    
+        
+        Write-Host "Mounting and Injecting Answer File into the $VMName VM." 
+        Set-Content -Value $using:UnattendXML -Path "C:\TempSCVMMMount\Windows\Panther\Unattend.xml" -Force
+        Write-Host "Dismounting Disk"
+        Dismount-WindowsImage -Path "C:\TempSCVMMMount" -Save | Out-Null
+        Remove-Item "C:\TempSCVMMMount"
 
-        # Start Virtual Machine
-        Write-Host "Starting Virtual Machine $VMName" 
-        Start-VM -Name $VMName | Out-Null
-    
+        Write-Host "Setting $VMName's VM Configuration"
+        Set-VMProcessor -VMName $VMname -Count 4
+        Set-VM -Name $VMName -AutomaticStopAction TurnOff
+
+        Write-Host "Starting $VMName VM."
+        Start-VM -Name $VMName
+
+        # Wait until the VM is restarted
+        while ((Invoke-Command -VMName $VMName -Credential $domainCred { "Test" } -ea SilentlyContinue) -ne "Test") { Start-Sleep -Seconds 5 }
+
+        # Configure SCVMM
+
+        Invoke-Command -VMName $VMName -Credential $domainCred -ArgumentList $SCVMMConfig, $VMName, $domainCred -ScriptBlock {
+            $IP = "192.168.1.9"
+            $MaskBits = 24 # This means subnet mask = 255.255.255.0
+            $Gateway = "192.168.1.1"
+            $Dns = "192.168.1.254"
+            $IPType = "IPv4"
+            # Retrieve the network adapter that you want to configure
+            $adapter = Get-NetAdapter | ? {$_.Status -eq "up"}
+            # Remove any existing IP, gateway from our ipv4 adapter
+            If (($adapter | Get-NetIPConfiguration).IPv4Address.IPAddress) {
+            $adapter | Remove-NetIPAddress -AddressFamily $IPType -Confirm:$false
+            }
+            If (($adapter | Get-NetIPConfiguration).Ipv4DefaultGateway) {
+            $adapter | Remove-NetRoute -AddressFamily $IPType -Confirm:$false
+            }
+            # Configure the IP address and default gateway
+            $adapter | New-NetIPAddress `
+            -AddressFamily $IPType `
+            -IPAddress $IP `
+            -PrefixLength $MaskBits `
+            -DefaultGateway $Gateway
+            # Configure the DNS client server IP addresses
+            $adapter | Set-DnsClientServerAddress -ServerAddresses $DNS
+        }
+        Invoke-Command -VMName $VMName -Credential $domainCred -ArgumentList $SCVMMConfig, $VMName, $domainCred -ScriptBlock {
+            $SCVMMConfig = $args[0]
+            $VMName = $args[1]
+            $domainCred = $args[2]
+            Import-Module NetAdapter
+
+            Write-Host "Enabling Remote Access on $VMName"
+            Enable-WindowsOptionalFeature -FeatureName RasRoutingProtocols -All -LimitAccess -Online | Out-Null
+            Enable-WindowsOptionalFeature -FeatureName RemoteAccessPowerShell -All -LimitAccess -Online | Out-Null
+
+            Write-Host "Rename Network Adapter in $VMName" 
+            Get-NetAdapter | Rename-NetAdapter -NewName Fabric
+            Write-Host "Configuring MTU on all Adapters"
+            Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Set-NetAdapterAdvancedProperty -RegistryValue $SCVMMConfig.SDNLABMTU -RegistryKeyword "*JumboPacket"   
+
+            # Set Gateway
+            $index = (Get-WmiObject Win32_NetworkAdapter | Where-Object { $_.netconnectionid -eq "Fabric" }).InterfaceIndex
+            $NetInterface = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.InterfaceIndex -eq $index }     
+            $NetInterface.SetGateways($SCVMMConfig.SDNLABRoute) | Out-Null
+
+            # Enable CredSSP
+            Write-Host "Configuring WSMAN Trusted Hosts on $VMName"
+            Set-Item WSMan:\localhost\Client\TrustedHosts * -Confirm:$false -Force | Out-Null
+            Enable-WSManCredSSP -Role Client -DelegateComputer * -Force | Out-Null
+            Enable-PSRemoting -force | Out-Null
+            Enable-WSManCredSSP -Role Server -Force | Out-Null
+            Enable-WSManCredSSP -Role Client -DelegateComputer localhost -Force | Out-Null
+            Enable-WSManCredSSP -Role Client -DelegateComputer $env:COMPUTERNAME -Force | Out-Null
+            Enable-WSManCredSSP -Role Client -DelegateComputer $SCVMMConfig.SDNDomainFQDN -Force | Out-Null
+            Enable-WSManCredSSP -Role Client -DelegateComputer "*.$($SCVMMConfig.SDNDomainFQDN)" -Force | Out-Null
+            New-Item -Path HKLM:\SOFTWARE\Policies\Microsoft\Windows\CredentialsDelegation -Name AllowFreshCredentialsWhenNTLMOnly -Force | Out-Null
+            New-ItemProperty -Path HKLM:\SOFTWARE\Policies\Microsoft\Windows\CredentialsDelegation\AllowFreshCredentialsWhenNTLMOnly -Name 1 -Value * -PropertyType String -Force | Out-Null
+
+            $SCVMMIP = $SCVMMConfig.SCVMMIP.Split("/")[0]
+            
+           # Stop Server Manager from starting on boot
+            Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\ServerManager" -Name "DoNotOpenServerManagerAtLogon" -Value 1
+            
+            # Create BGP Router
+            Add-BgpRouter -BGPIdentifier $SCVMMIP -LocalASN $SCVMMConfig.WACASN -TransitRouting 'Enabled' -ClusterId 1 -RouteReflector 'Enabled'
+
+            $RequestInf = @"
+[Version] 
+Signature="`$Windows NT$"
+
+[NewRequest] 
+Subject = "CN=$($SCVMMConfig.SCVMM.Name).$($SCVMMConfig.SDNDomainFQDN)"
+Exportable = True
+KeyLength = 2048                    
+KeySpec = 1                     
+KeyUsage = 0xA0               
+MachineKeySet = True 
+ProviderName = "Microsoft RSA SChannel Cryptographic Provider" 
+ProviderType = 12 
+SMIME = FALSE 
+RequestType = CMC
+FriendlyName = "SCVMM"
+
+[Strings] 
+szOID_SUBJECT_ALT_NAME2 = "2.5.29.17" 
+szOID_ENHANCED_KEY_USAGE = "2.5.29.37" 
+szOID_PKIX_KP_SERVER_AUTH = "1.3.6.1.5.5.7.3.1" 
+szOID_PKIX_KP_CLIENT_AUTH = "1.3.6.1.5.5.7.3.2"
+[Extensions] 
+%szOID_SUBJECT_ALT_NAME2% = "{text}dns=$($SCVMMConfig.SCVMM.Name).$($SCVMMConfig.SDNDomainFQDN)" 
+%szOID_ENHANCED_KEY_USAGE% = "{text}%szOID_PKIX_KP_SERVER_AUTH%,%szOID_PKIX_KP_CLIENT_AUTH%"
+[RequestAttributes] 
+CertificateTemplate= WebServer
+"@
+
+            New-Item C:\SCVMMCert -ItemType Directory -Force | Out-Null
+            Set-Content -Value $RequestInf -Path C:\SCVMMCert\SCVMMCert.inf -Force | Out-Null
+
+            Register-PSSessionConfiguration -Name 'Microsoft.SDNNested' -RunAsCredential $domainCred -MaximumReceivedDataSizePerCommandMB 1000 -MaximumReceivedObjectSizeMB 1000
+            Write-Host "Requesting and installing SSL Certificate on $using:VMName" 
+            Invoke-Command -ComputerName $VMName -ConfigurationName 'Microsoft.SDNNested' -Credential $domainCred -ArgumentList $SCVMMConfig -ScriptBlock {
+                $SCVMMConfig = $args[0]
+                # Get the CA Name
+                $CertDump = certutil -dump
+                $ca = ((((($CertDump.Replace('`', "")).Replace("'", "")).Replace(":", "=")).Replace('\', "")).Replace('"', "") | ConvertFrom-StringData).Name
+                $CertAuth = $SCVMMConfig.SDNDomainFQDN + '\' + $ca
+
+                Write-Host "CA is: $ca"
+                Write-Host "Certificate Authority is: $CertAuth"
+                Write-Host "Certdump is $CertDump"
+
+                # Request and Accept SSL Certificate
+                Set-Location C:\SCVMMCert
+                certreq -q -f -new SCVMMCert.inf SCVMMCert.req
+                certreq -q -config $CertAuth -attrib "CertificateTemplate:webserver" -submit SCVMMCert.req  SCVMMCert.cer 
+                certreq -q -accept SCVMMCert.cer
+                certutil -q -store my
+
+                Set-Location 'C:\'
+                Remove-Item C:\SCVMMCert -Recurse -Force
+
+            } -Authentication Credssp
     }
+}
 }
 function Set-DHCPServerOnDC {
     Param (
@@ -1255,20 +1391,27 @@ function Set-SCVMMDeployPrereqs {
         $SCVMMConfig = $using:SCVMMConfig
         $localCred = $using:localcred
         $domainCred = $using:domainCred
-        Invoke-Command -VMName $SCVMMConfig.DCName -Credential $domainCred -ArgumentList $SCVMMConfig -ScriptBlock {
-        Write-Host "Configuring DNS on $DCName" 
+        $tempFolderName = "Temp"
+        $tempFolder = "C:\" + $tempFolderName +"\"
+        $itemType = "Directory"
+         
+        
+        $SCVMMUrl = "https://go.microsoft.com/fwlink/p/?LinkID=2195845&clcid=0x409&culture=en-us&country=US"
+        $SCVMMFile = $tempFolder + "SCVMM_2022.exe"
+            
+        # Downloading the required files 
+        New-Item -Path "C:\" -Name $tempFolderName -ItemType $itemType -Force | Out-Null
+        
+        Invoke-WebRequest -Uri $SCVMMUrl -OutFile $SCVMMFile
+
+        # Copy file to VM
+        Copy-Item -Path $SCVMMFile -Destination "C:\" | Out-Null
+
+        Invoke-Command -VMName $SCVMMConfig.SCVMM.Name -Credential $domainCred -ArgumentList $SCVMMConfig -ScriptBlock {
+            
+        Start-Process -Wait -FilePath "C:\Temp\SCVMM_2022.exe" -Argument "/silent" -PassThru
         }
     }
-    
-    $node=$SCVMMConfig.NodeHostConfig
-        Invoke-Command -VMName $node.Hostname -Credential $localCred -ArgumentList $env:subscriptionId, $env:spnTenantId, $env:spnClientID, $env:spnClientSecret, $env:resourceGroup -ScriptBlock {
-            $subId = $args[0]
-            $tenantId = $args[1]
-            $clientId = $args[2]
-            $clientSecret = $args[3]
-            $resourceGroup = $args[4]
-         Write-Host "test"
-        }
     
 }
 
