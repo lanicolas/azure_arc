@@ -162,7 +162,7 @@
                     "scope": "Inner"
                 },
                 "templateLink": {
-                    "uri": "https://raw.githubusercontent.com/microsoft/azure_arc/main/azure_arc_servers_jumpstart/proxy/ARM/cloudDeploy.json"
+                    "uri": "https://raw.githubusercontent.com/lanicolas/azure_arc/proxy/azure_arc_servers_jumpstart/proxy/ARM/cloudDeploy.json"
                 },
                 "mode": "Incremental",
                 "parameters": {
