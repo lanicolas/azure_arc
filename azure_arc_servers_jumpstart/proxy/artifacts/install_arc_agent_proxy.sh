@@ -13,6 +13,7 @@ PORT=3128
 PASSWORD=$10
 
 echo "insecure"| sudo tee -a /root/.curlrc > /dev/null
+echo "check-certificate = off"| sudo tee -a /root/.curlrc > /dev/null
 
 touch /home/$USER/.bash_profile
 chmod +x /home/$USER/.bash_profile
@@ -105,5 +106,3 @@ sudo azcmagent config set proxy.url "http://$URL:$PORT"
 
 sudo rm -f /home/$USER/.bash_profile
 EOT
-
-
