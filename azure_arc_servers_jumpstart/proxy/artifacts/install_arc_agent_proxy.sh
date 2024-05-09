@@ -12,6 +12,8 @@ URL=$9
 PORT=3128
 PASSWORD=$10
 
+echo "insecure"| sudo tee -a /root/.curlrc > /dev/null
+
 touch /home/$USER/.bash_profile
 chmod +x /home/$USER/.bash_profile
 
@@ -31,6 +33,8 @@ export PASSWORD=$PASSWORD
 
 export HTTP_PROXY="http://$URL:$PORT"
 export HTTPS_PROXY="http://$URL:$PORT"
+export http_proxy="http://$URL:$PORT"
+export https_proxy="http://$URL:$PORT"
 export FTP_PROXY="http://$URL:$PORT"
 export DNS_PROXY="http://$URL:$PORT"
 export RSYNC_PROXY="http://$URL:$PORT"
@@ -42,7 +46,7 @@ echo "export HTTPS_PROXY=$HTTP_PROXY" | sudo tee -a  /etc/profile.d/proxy.sh
 echo "export FTP_PROXY=$HTTP_PROXY" | sudo tee -a  /etc/profile.d/proxy.sh
 echo "export DNS_PROXY=$HTTP_PROXY" | sudo tee -a  /etc/profile.d/proxy.sh
 echo "export RSYNC_PROXY=$HTTP_PROXY" | sudo tee -a  /etc/profile.d/proxy.sh
-
+alias curl="curl -x http://$URL:$PORT"
 
 # Set up certificate
 sudo touch /etc/apt/apt.conf
@@ -61,13 +65,19 @@ echo "Configuring walinux agent"
 sudo service walinuxagent stop
 sudo waagent -deprovision -force
 sudo rm -rf /var/lib/waagent
+touch /etc/apt/apt.conf.d/99verify-peer.conf \
+&& echo >>/etc/apt/apt.conf.d/99verify-peer.conf "Acquire { https::Verify-Peer false }"
+
 
 echo "Configuring Firewall"
 
 sudo ufw --force enable
 sudo ufw deny out from any to 169.254.169.254
 sudo ufw default allow incoming
+
+
 sudo apt-get update
+
 
 echo "Reconfiguring Hostname"
 
@@ -75,7 +85,7 @@ sudo hostname $VMNAME
 sudo -E /bin/sh -c 'echo $VMNAME > /etc/hostname'
 
 # Download the installation package
-wget https://aka.ms/azcmagent -O ~/install_linux_azcmagent.sh --no-check-certificate
+wget -e use_proxy=yes -e https_proxy=$URL:$PORT https://aka.ms/azcmagent -O ~/install_linux_azcmagent.sh --no-check-certificate
 
 # Install the hybrid agent
 sudo bash ~/install_linux_azcmagent.sh --proxy "http://$URL:$PORT"
