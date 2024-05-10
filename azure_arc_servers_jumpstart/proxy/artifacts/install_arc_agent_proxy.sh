@@ -10,8 +10,7 @@ LOCATION=$7
 VMNAME=$8
 URL=$9
 PORT=3128
-PASSWORD='$10'
-echo $PASSWORD
+PASSWORD=$10
 
 touch /home/$USER/.bash_profile
 chmod +x /home/$USER/.bash_profile
@@ -41,10 +40,10 @@ export RSYNC_PROXY="http://$URL:$PORT"
 # Set up proxy 
 
 echo "export HTTP_PROXY="http://$URL:$PORT"" | sudo tee -a  /etc/profile.d/proxy.sh
-echo "export HTTPS_PROXY="http://$URL:$PORT" | sudo tee -a  /etc/profile.d/proxy.sh
-echo "export FTP_PROXY="http://$URL:$PORT" | sudo tee -a  /etc/profile.d/proxy.sh
-echo "export DNS_PROXY="http://$URL:$PORT" | sudo tee -a  /etc/profile.d/proxy.sh
-echo "export RSYNC_PROXY="http://$URL:$PORT" | sudo tee -a  /etc/profile.d/proxy.sh
+echo "export HTTPS_PROXY="http://$URL:$PORT"" | sudo tee -a  /etc/profile.d/proxy.sh
+echo "export FTP_PROXY="http://$URL:$PORT"" | sudo tee -a  /etc/profile.d/proxy.sh
+echo "export DNS_PROXY="http://$URL:$PORT""| sudo tee -a  /etc/profile.d/proxy.sh
+echo "export RSYNC_PROXY="http://$URL:$PORT"" | sudo tee -a  /etc/profile.d/proxy.sh
 
 # Set up certificate
 sudo touch /etc/apt/apt.conf
@@ -54,6 +53,7 @@ echo "Acquire::http::proxy \"http://$URL:$PORT\";" | sudo tee /etc/apt/apt.conf 
 sudo apt-get update
 sudo apt-get install -y sshpass
 sudo echo $PASSWORD > /tmp/pass
+sudo cat /tmp/pass
 sudo sshpass -f '/tmp/pass' scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $USER@$URL:/tmp/squid-ca-cert-key.pem .
 sudo mv ./squid-ca-cert-key.pem /usr/local/share/ca-certificates/squid-ca-cert-key.crt
 sudo update-ca-certificates
