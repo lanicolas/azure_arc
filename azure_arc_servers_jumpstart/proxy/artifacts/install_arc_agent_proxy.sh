@@ -41,11 +41,10 @@ export RSYNC_PROXY="http://$URL:$PORT"
 # Set up proxy 
 
 echo "export HTTP_PROXY="http://$URL:$PORT"" | sudo tee -a  /etc/profile.d/proxy.sh
-echo "export HTTPS_PROXY=$HTTP_PROXY" | sudo tee -a  /etc/profile.d/proxy.sh
-echo "export FTP_PROXY=$HTTP_PROXY" | sudo tee -a  /etc/profile.d/proxy.sh
-echo "export DNS_PROXY=$HTTP_PROXY" | sudo tee -a  /etc/profile.d/proxy.sh
-echo "export RSYNC_PROXY=$HTTP_PROXY" | sudo tee -a  /etc/profile.d/proxy.sh
-alias curl="curl -x http://$URL:$PORT"
+echo "export HTTPS_PROXY="http://$URL:$PORT" | sudo tee -a  /etc/profile.d/proxy.sh
+echo "export FTP_PROXY="http://$URL:$PORT" | sudo tee -a  /etc/profile.d/proxy.sh
+echo "export DNS_PROXY="http://$URL:$PORT" | sudo tee -a  /etc/profile.d/proxy.sh
+echo "export RSYNC_PROXY="http://$URL:$PORT" | sudo tee -a  /etc/profile.d/proxy.sh
 
 # Set up certificate
 sudo touch /etc/apt/apt.conf
@@ -105,5 +104,7 @@ sudo azcmagent connect \
   --correlation-id "d009f5dd-dba8-4ac7-bac9-b54ef3a6671a" 
 
 
-sudo rm -f /home/$USER/.bash_profile
+# sudo rm -f /home/$USER/.bash_profile
 EOT
+
+
